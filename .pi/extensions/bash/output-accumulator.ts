@@ -8,6 +8,8 @@ export interface OutputAccumulatorOptions {
 	maxLines?: number;
 	maxBytes?: number;
 	tempFilePrefix?: string;
+	/** Disable internal temp files when the caller already logs all output. */
+	persistOutput?: boolean;
 }
 
 export interface OutputSnapshot {
@@ -37,6 +39,7 @@ export class OutputAccumulator {
 	private readonly maxBytes: number;
 	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
+	private readonly persistOutput: boolean;
 	private readonly decoder = new TextDecoder();
 
 	private rawChunks: Buffer[] = [];
@@ -48,6 +51,7 @@ export class OutputAccumulator {
 	private completedLines = 0;
 	private totalLines = 0;
 	private currentLineBytes = 0;
+	private lastCompletedLineBytes = 0;
 	private hasOpenLine = false;
 	private finished = false;
 
@@ -59,6 +63,7 @@ export class OutputAccumulator {
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
 		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
+		this.persistOutput = options.persistOutput ?? true;
 	}
 
 	append(data: Buffer): void {
@@ -69,6 +74,7 @@ export class OutputAccumulator {
 		this.totalRawBytes += data.length;
 		this.appendDecodedText(this.decoder.decode(data, { stream: true }));
 
+		if (!this.persistOutput) return;
 		if (this.tempFileStream || this.shouldUseTempFile()) {
 			this.ensureTempFile();
 			this.tempFileStream?.write(data);
@@ -83,7 +89,7 @@ export class OutputAccumulator {
 		}
 		this.finished = true;
 		this.appendDecodedText(this.decoder.decode());
-		if (this.shouldUseTempFile()) {
+		if (this.persistOutput && this.shouldUseTempFile()) {
 			this.ensureTempFile();
 		}
 	}
@@ -107,7 +113,7 @@ export class OutputAccumulator {
 			maxBytes: this.maxBytes,
 		};
 
-		if (options.persistIfTruncated && truncation.truncated) {
+		if (this.persistOutput && options.persistIfTruncated && truncation.truncated) {
 			this.ensureTempFile();
 		}
 
@@ -142,7 +148,7 @@ export class OutputAccumulator {
 	}
 
 	getLastLineBytes(): number {
-		return this.currentLineBytes;
+		return this.hasOpenLine ? this.currentLineBytes : this.lastCompletedLineBytes;
 	}
 
 	private appendDecodedText(text: string): void {
@@ -160,14 +166,19 @@ export class OutputAccumulator {
 
 		let newlines = 0;
 		let lastNewline = -1;
+		let previousNewline = -1;
 		for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
 			newlines++;
+			previousNewline = lastNewline;
 			lastNewline = i;
 		}
 		if (newlines === 0) {
 			this.currentLineBytes += bytes;
 			this.hasOpenLine = true;
 		} else {
+			this.lastCompletedLineBytes = newlines === 1
+				? this.currentLineBytes + byteLength(text.slice(0, lastNewline))
+				: byteLength(text.slice(previousNewline + 1, lastNewline));
 			this.completedLines += newlines;
 			const tail = text.slice(lastNewline + 1);
 			this.currentLineBytes = byteLength(tail);
