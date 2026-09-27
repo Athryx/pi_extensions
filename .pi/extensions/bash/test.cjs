@@ -62,6 +62,14 @@ test('foreground and background bash', async () => {
     await run(close, { session_name: auto.details.sessionName });
     fs.unlinkSync(auto.details.fullOutputPath);
 
+    const unread = await run(bash, { command: 'sleep 0.05; printf close-output; sleep 30', session_name: 'unread', yield_timeout_ms: 0 });
+    await new Promise(resolve => setTimeout(resolve, 120));
+    const unreadClosed = await run(close, { session_name: 'unread' });
+    assert.match(unreadClosed.content[0].text, /close-output/);
+    assert.equal(unreadClosed.details.fullOutputPath, unread.details.fullOutputPath);
+    assert.equal(fs.readFileSync(unread.details.fullOutputPath, 'utf8'), 'close-output');
+    fs.unlinkSync(unread.details.fullOutputPath);
+
     const dup = await run(bash, { command: 'sleep 30', session_name: 'duplicate', yield_timeout_ms: 0 });
     await assert.rejects(run(bash, { command: 'true', session_name: 'duplicate' }), /already exists/);
     const closed = await run(close, { session_name: 'duplicate' });

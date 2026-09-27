@@ -42,7 +42,7 @@ function getBashEnvironment(ctx: ExtensionContext | undefined): NodeJS.ProcessEn
 	return env;
 }
 
-function formatResult(result: SessionResult, name: string, path: string, background: boolean) {
+function formatResult(result: SessionResult, name: string, path: string, background: boolean, reportExitStatus = true) {
 	const { snapshot, lastLineBytes } = result;
 	const t = snapshot.truncation;
 	let text = snapshot.content || "(no new output)";
@@ -61,9 +61,9 @@ function formatResult(result: SessionResult, name: string, path: string, backgro
 	if (background) {
 		details.sessionName = name;
 		text += `\n\n[Running bash session: ${name}. Full output: ${path}. Use interact_bash to send stdin or read new output; close_bash to stop it.]`;
-	} else if (result.error) {
+	} else if (reportExitStatus && result.error) {
 		throw new Error(`${text}\n\n${result.error.message}`);
-	} else if (result.exitCode !== 0 && result.exitCode !== null) {
+	} else if (reportExitStatus && result.exitCode !== 0 && result.exitCode !== null) {
 		throw new Error(`${text}\n\nCommand exited with code ${result.exitCode}`);
 	}
 	return { content: [{ type: "text" as const, text }], details };
@@ -133,14 +133,23 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 
 	const close: ToolDefinition<typeof closeSchema, BashToolDetails> = {
 		name: "close_bash", label: "close_bash",
-		description: "Kill a background bash session and its process tree. Its output log is retained.",
+		description: `Kill a background bash session and its process tree. Returns output since the last poll (last ${DEFAULT_MAX_LINES} lines / ${DEFAULT_MAX_BYTES / 1024}KB); its full output log is retained.`,
 		promptSnippet: "Stop a background bash session by name",
 		parameters: closeSchema,
 		async execute(_id, { session_name }) {
 			const session = sessions.get(session_name);
-			sessions.remove(session_name);
-			await session.close();
-			return { content: [{ type: "text", text: `Closed bash session ${session_name}. Full output: ${session.outputPath}` }], details: { fullOutputPath: session.outputPath } };
+			if (session.busy) throw new Error(`Bash session ${session_name} is already being polled`);
+			session.busy = true;
+			try {
+				await session.close();
+				const result = await session.collect(0);
+				const { content, details } = formatResult(result, session_name, session.outputPath, false, false);
+				content[0].text += `\n\n[Closed bash session ${session_name}. Full output: ${session.outputPath}]`;
+				sessions.remove(session_name);
+				return { content, details };
+			} finally {
+				session.busy = false;
+			}
 		},
 	};
 
