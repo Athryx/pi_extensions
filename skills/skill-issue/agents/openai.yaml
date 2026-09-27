@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Issue Reporter"
+  short_description: "Report skill tooling and instruction issues"
+  default_prompt: "Use $skill-issue to document an issue encountered while following another skill."

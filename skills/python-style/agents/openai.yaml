@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python Style"
+  short_description: "Apply project Python style preferences"
+  default_prompt: "Use $python-style when writing or editing Python code in this project."
