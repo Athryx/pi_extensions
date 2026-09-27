@@ -18,6 +18,11 @@ export function yieldMs(value: number | undefined, fallback: number): number {
 	return ms;
 }
 
+export interface StoppedBashSession {
+	name: string;
+	outputPath: string;
+}
+
 export interface SessionResult {
 	finished: boolean;
 	exitCode: number | null;
@@ -104,6 +109,8 @@ export class BashSession {
 		}
 	}
 
+	get running(): boolean { return !this.finished; }
+
 	write(input: string): void {
 		if (this.finished || this.child.stdin?.destroyed || !this.child.stdin?.writable) {
 			throw new Error(`Bash session ${this.name} is not accepting stdin`);
@@ -189,9 +196,11 @@ export class BashSessions {
 
 	remove(name: string): void { this.sessions.delete(name); }
 
-	async closeAll(): Promise<void> {
+	async closeAll(): Promise<StoppedBashSession[]> {
 		const all = [...this.sessions.values()].filter((session): session is BashSession => !!session);
 		this.sessions.clear();
+		const stopped = all.filter((session) => session.running).map(({ name, outputPath }) => ({ name, outputPath }));
 		await Promise.all(all.map((session) => session.close()));
+		return stopped;
 	}
 }

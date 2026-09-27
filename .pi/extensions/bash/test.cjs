@@ -8,19 +8,20 @@ const esbuild = require(require.resolve('esbuild', { paths: [piRoot] }));
 
 // This standalone test replaces only Pi's agent-dir helper; the tools and shell
 // implementation are compiled from the actual extension sources.
-async function loadTools() {
+async function loadExtension(entry = 'tool.ts') {
 const bundle = (await esbuild.build({
-  entryPoints: [path.join(__dirname, 'tool.ts')], bundle: true, platform: 'node', format: 'cjs',
+  entryPoints: [path.join(__dirname, entry)], bundle: true, platform: 'node', format: 'cjs',
   write: false, packages: 'bundle', nodePaths: [path.join(piRoot, 'node_modules')],
   plugins: [{ name: 'pi-stub', setup(build) {
     build.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({ path: 'pi-stub', namespace: 'test' }));
-    build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const getAgentDir = () => "/tmp";', loader: 'js' }));
+    build.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const getAgentDir = () => "/tmp"; export const SettingsManager = { create: () => ({ getShellPath: () => undefined, getShellCommandPrefix: () => undefined }) };', loader: 'js' }));
   }}],
 })).outputFiles[0].text;
 const m = { exports: {} };
 new Function('module', 'exports', 'require', bundle)(m, m.exports, require);
-return m.exports.createBashTools;
+return m.exports;
 }
+async function loadTools() { return (await loadExtension()).createBashTools; }
 const run = async (tool, args) => tool.execute('id', args);
 
 // Start with stdout on each side of a yield; test that polling consumes only
@@ -82,5 +83,41 @@ test('foreground and background bash', async () => {
     const pending = bash.execute('id', { command: 'sleep 30', yield_timeout_ms: 300000 }, ac.signal);
     setTimeout(() => ac.abort(), 50);
     await assert.rejects(pending, /aborted/);
-  } finally { await shutdown(); }
+  } finally { assert.deepEqual(await shutdown(), []); }
+});
+
+test('session shutdown persists a model-visible notice only for stopped background commands', async () => {
+  const extension = (await loadExtension('index.ts')).default;
+  const handlers = new Map();
+  const tools = new Map();
+  extension({ on: (name, handler) => handlers.set(name, handler), registerTool: tool => tools.set(tool.name, tool) });
+  const notices = [];
+  const ctx = {
+    cwd: process.cwd(), isProjectTrusted: () => true,
+    sessionManager: { appendCustomMessageEntry: (...args) => notices.push(args) },
+  };
+  await handlers.get('session_start')({}, ctx);
+  await handlers.get('session_shutdown')({}, ctx);
+  assert.deepEqual(notices, []);
+
+  await handlers.get('session_start')({}, ctx);
+  const bash = tools.get('bash');
+  const active = await run(bash, { command: 'sleep 30', session_name: 'active', yield_timeout_ms: 0 });
+  const done = await run(bash, { command: 'true', session_name: 'already-done', yield_timeout_ms: 0 });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  try {
+    await handlers.get('session_shutdown')({}, ctx);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0][0], 'bash-session-shutdown');
+    assert.equal(notices[0][2], true);
+    assert.match(notices[0][1], /active/);
+    assert.match(notices[0][1], /cannot be resumed/i);
+    assert.ok(notices[0][1].includes(active.details.fullOutputPath));
+    assert.doesNotMatch(notices[0][1], /already-done/);
+    await handlers.get('session_shutdown')({}, ctx);
+    assert.equal(notices.length, 1);
+  } finally {
+    fs.unlinkSync(active.details.fullOutputPath);
+    if (done.details.fullOutputPath) fs.unlinkSync(done.details.fullOutputPath);
+  }
 });
