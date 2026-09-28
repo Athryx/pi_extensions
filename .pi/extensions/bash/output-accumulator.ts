@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateMiddle, truncateTail } from "./truncate.ts";
 
 export interface OutputAccumulatorOptions {
 	maxLines?: number;
@@ -43,6 +43,9 @@ export class OutputAccumulator {
 	private readonly decoder = new TextDecoder();
 
 	private rawChunks: Buffer[] = [];
+	private headText = "";
+	private headBytes = 0;
+	private headComplete = false;
 	private tailText = "";
 	private tailBytes = 0;
 	private tailStartsAtLineBoundary = true;
@@ -95,23 +98,13 @@ export class OutputAccumulator {
 	}
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
-		const tailTruncation = truncateTail(this.getSnapshotText(), {
-			maxLines: this.maxLines,
-			maxBytes: this.maxBytes,
-		});
 		const truncated = this.totalLines > this.maxLines || this.totalDecodedBytes > this.maxBytes;
-		const truncatedBy = truncated
-			? (tailTruncation.truncatedBy ?? (this.totalDecodedBytes > this.maxBytes ? "bytes" : "lines"))
-			: null;
-		const truncation: TruncationResult = {
-			...tailTruncation,
-			truncated,
-			truncatedBy,
-			totalLines: this.totalLines,
-			totalBytes: this.totalDecodedBytes,
-			maxLines: this.maxLines,
-			maxBytes: this.maxBytes,
-		};
+		const truncation: TruncationResult = truncated
+			? truncateMiddle(this.headText, this.tailText, this.totalLines, this.totalDecodedBytes, {
+				maxLines: this.maxLines,
+				maxBytes: this.maxBytes,
+			})
+			: truncateTail(this.getSnapshotText(), { maxLines: this.maxLines, maxBytes: this.maxBytes });
 
 		if (this.persistOutput && options.persistIfTruncated && truncation.truncated) {
 			this.ensureTempFile();
@@ -158,6 +151,23 @@ export class OutputAccumulator {
 
 		const bytes = byteLength(text);
 		this.totalDecodedBytes += bytes;
+		if (!this.headComplete) {
+			const remaining = this.maxRollingBytes - this.headBytes;
+			let prefix = text;
+			if (bytes > remaining) {
+				let used = 0;
+				prefix = "";
+				for (const character of text) {
+					const size = byteLength(character);
+					if (used + size > remaining) break;
+					prefix += character;
+					used += size;
+				}
+			}
+			this.headText += prefix;
+			this.headBytes += byteLength(prefix);
+			this.headComplete = prefix.length < text.length || this.headBytes === this.maxRollingBytes;
+		}
 		this.tailText += text;
 		this.tailBytes += bytes;
 		if (this.tailBytes > this.maxRollingBytes * 2) {

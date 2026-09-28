@@ -27,6 +27,12 @@ export interface TruncationResult {
 	outputLines: number;
 	/** Number of bytes in the truncated output */
 	outputBytes: number;
+	/** Lines and bytes retained from each end when the middle is omitted. */
+	headOutputLines?: number;
+	tailOutputLines?: number;
+	headOutputBytes?: number;
+	tailOutputBytes?: number;
+	firstLinePartial?: boolean;
 	/** Whether the last line was partially truncated (only for tail truncation edge case) */
 	lastLinePartial: boolean;
 	/** Whether the first line exceeded the byte limit (for head truncation) */
@@ -35,6 +41,62 @@ export interface TruncationResult {
 	maxLines: number;
 	/** The max bytes limit that was applied */
 	maxBytes: number;
+}
+
+const MIDDLE_MARKER = "\n... [middle output omitted] ...\n";
+
+function prefixWithinBytes(content: string, maxBytes: number): string {
+	let bytes = 0;
+	let end = 0;
+	for (const character of content) {
+		const size = Buffer.byteLength(character, "utf-8");
+		if (bytes + size > maxBytes) break;
+		bytes += size;
+		end += character.length;
+	}
+	return content.slice(0, end);
+}
+
+/** Keep approximately equal portions of the beginning and end of streamed output. */
+export function truncateMiddle(
+	headSource: string,
+	tailSource: string,
+	totalLines: number,
+	totalBytes: number,
+	options: TruncationOptions = {},
+): TruncationResult {
+	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
+	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+	const contentBytes = maxBytes - Buffer.byteLength(MIDDLE_MARKER);
+	const headBytes = Math.floor(contentBytes / 2);
+	const tailBytes = contentBytes - headBytes;
+	const headLines = Math.floor((maxLines - 1) / 2);
+	const tailLines = maxLines - 1 - headLines;
+	const head = truncateHead(headSource, { maxLines: headLines, maxBytes: headBytes });
+	const tail = truncateTail(tailSource, { maxLines: tailLines, maxBytes: tailBytes });
+	const firstLinePartial = head.firstLineExceedsLimit;
+	const beginning = firstLinePartial ? prefixWithinBytes(headSource, headBytes) : head.content;
+	const ending = tail.content;
+	const headOutputLines = firstLinePartial ? 1 : head.outputLines;
+	const content = `${beginning}${MIDDLE_MARKER}${ending}`;
+	return {
+		content,
+		truncated: true,
+		truncatedBy: totalBytes > maxBytes ? "bytes" : "lines",
+		totalLines,
+		totalBytes,
+		outputLines: headOutputLines + tail.outputLines + 1,
+		outputBytes: Buffer.byteLength(content, "utf-8"),
+		headOutputLines,
+		tailOutputLines: tail.outputLines,
+		headOutputBytes: Buffer.byteLength(beginning, "utf-8"),
+		tailOutputBytes: Buffer.byteLength(ending, "utf-8"),
+		firstLinePartial,
+		lastLinePartial: tail.lastLinePartial,
+		firstLineExceedsLimit: head.firstLineExceedsLimit,
+		maxLines,
+		maxBytes,
+	};
 }
 
 export interface TruncationOptions {

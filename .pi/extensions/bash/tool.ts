@@ -26,6 +26,18 @@ interface BashToolDetails {
 
 function seconds(ms: number): string { return `${(ms / 1000).toFixed(1)}s`; }
 
+function truncationDescription(result: TruncationResult, lastLineBytes: number): string {
+	const headBytes = formatSize(result.headOutputBytes ?? 0);
+	const tailBytes = formatSize(result.tailOutputBytes ?? 0);
+	if (result.truncatedBy === "lines") {
+		const headEnd = result.headOutputLines ?? 0;
+		const tailStart = result.totalLines - (result.tailOutputLines ?? 0) + 1;
+		return `Showing lines 1-${headEnd} and ${tailStart}-${result.totalLines} of ${result.totalLines}`;
+	}
+	const lastLine = result.lastLinePartial ? ` (last line is ${formatSize(lastLineBytes)})` : "";
+	return `Showing first ${headBytes} and last ${tailBytes} of ${formatSize(result.totalBytes)}${lastLine}`;
+}
+
 function getBashEnvironment(ctx: ExtensionContext | undefined): NodeJS.ProcessEnv {
 	const env = { ...getShellEnv() };
 	delete env.PI_SESSION_ID;
@@ -50,40 +62,35 @@ function formatResult(
 	result: SessionResult,
 	name: string,
 	path: string,
-	options: { background: boolean; closed?: boolean; showSessionInstructions?: boolean },
+	options: { background: boolean; closed?: boolean; showSessionInstructions?: boolean; includeWaitedTime?: boolean },
 ) {
-	const { background, closed = false, showSessionInstructions = false } = options;
+	const { background, closed = false, showSessionInstructions = false, includeWaitedTime = !closed } = options;
 	const { snapshot, lastLineBytes } = result;
 	const t = snapshot.truncation;
 	let text = snapshot.content || "(no new output)";
+	const fullOutput = `${t.truncated ? `${truncationDescription(t, lastLineBytes)}. ` : ""}Full output: ${path}`;
 	const details: BashToolDetails = {
 		fullOutputPath: path,
 		elapsedSeconds: result.elapsedMs / 1000,
-		...(closed ? {} : { waitedSeconds: result.waitedMs / 1000 }),
+		...(includeWaitedTime ? { waitedSeconds: result.waitedMs / 1000 } : {}),
 	};
 	if (t.truncated) {
 		details.truncation = t;
-		const start = t.totalLines - t.outputLines + 1;
-		if (t.lastLinePartial) {
-			text += `\n\n[Showing last ${formatSize(t.outputBytes)} of line ${t.totalLines} (line is ${formatSize(lastLineBytes)}). Full output: ${path}]`;
-		} else if (t.truncatedBy === "lines") {
-			text += `\n\n[Showing lines ${start}-${t.totalLines} of ${t.totalLines}. Full output: ${path}]`;
-		} else {
-			text += `\n\n[Showing lines ${start}-${t.totalLines} of ${t.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${path}]`;
-		}
 	}
 	if (background) {
 		details.sessionName = name;
 		const instructions = showSessionInstructions ? " Use interact_bash to send stdin or read new output; close_bash to stop it." : "";
-		text += `\n\n[Running bash session: ${name}. Command elapsed: ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call. Full output: ${path}.${instructions}]`;
+		const waited = includeWaitedTime ? `; waited: ${seconds(result.waitedMs)} this call` : "";
+		text += `\n\n[Running bash session: ${name}. Command elapsed: ${seconds(result.elapsedMs)}${waited}. ${fullOutput}.${instructions}]`;
 	} else if (closed) {
-		text += `\n\n[Closed bash session ${name}. Command ran for ${seconds(result.elapsedMs)}. Full output: ${path}]`;
+		text += `\n\n[Closed bash session ${name}. Command ran for ${seconds(result.elapsedMs)}. ${fullOutput}]`;
 	} else if (result.error) {
-		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}]\n${result.error.message}`);
+		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}${t.truncated ? `. ${fullOutput}` : ""}]\n${result.error.message}`);
 	} else if (result.exitCode !== 0 && result.exitCode !== null) {
-		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}]\nCommand exited with code ${result.exitCode}`);
+		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}${t.truncated ? `. ${fullOutput}` : ""}]\nCommand exited with code ${result.exitCode}`);
 	} else {
-		text += `\n\n[Command ran for ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call.]`;
+		const waited = includeWaitedTime ? `; waited: ${seconds(result.waitedMs)} this call` : "";
+		text += `\n\n[Command ran for ${seconds(result.elapsedMs)}${waited}.${t.truncated ? ` ${fullOutput}` : ""}]`;
 	}
 	return { content: [{ type: "text" as const, text }], details };
 }
@@ -111,12 +118,16 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 					if (!result.snapshot.truncation.truncated && !result.error && result.exitCode === 0) {
 						await session.discardLog();
 						return {
-							content: [{ type: "text", text: `${result.snapshot.content || "(no output)"}\n\n[Command ran for ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call.]` }],
-							details: { elapsedSeconds: result.elapsedMs / 1000, waitedSeconds: result.waitedMs / 1000 },
+							content: [{ type: "text", text: `${result.snapshot.content || "(no output)"}\n\n[Command ran for ${seconds(result.elapsedMs)}.]` }],
+							details: { elapsedSeconds: result.elapsedMs / 1000 },
 						};
 					}
 				}
-			return formatResult(result, session.name, session.outputPath, { background: !result.finished, showSessionInstructions: true });
+			return formatResult(result, session.name, session.outputPath, {
+				background: !result.finished,
+				showSessionInstructions: true,
+				includeWaitedTime: false,
+			});
 			} catch (error) {
 				// An aborted initial call must not leave behind an unreferenced process.
 				if (signal?.aborted) {

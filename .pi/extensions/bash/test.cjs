@@ -24,6 +24,7 @@ return m.exports;
 }
 async function loadTools() { return (await loadExtension()).createBashTools; }
 const run = async (tool, args) => tool.execute('id', args);
+const statusLine = (result) => result.content[0].text.split('\n\n').at(-1);
 
 test('bash tools reject unknown argument names', async () => {
   const { Check } = await import(require.resolve('typebox/value', { paths: [piRoot] }));
@@ -53,39 +54,49 @@ test('foreground and background bash', async () => {
   const [bash, interact, close] = tools;
   try {
     const fg = await run(bash, { command: 'sleep 0.05; printf foreground', yield_timeout_ms: 1000 });
-    assert.match(fg.content[0].text, /^foreground\n\n\[Command ran for [\d.]+s; waited: [\d.]+s this call\.\]$/);
+    assert.match(fg.content[0].text, /^foreground\n\n\[Command ran for [\d.]+s\.\]$/);
     assert.equal(fg.details.fullOutputPath, undefined);
     assert.ok(fg.details.elapsedSeconds >= 0.04);
-    assert.ok(fg.details.waitedSeconds >= 0.04);
+    assert.equal(fg.details.waitedSeconds, undefined);
 
     const bg = await run(bash, { command: 'printf first; read x; printf "second:%s" "$x"', session_name: 'test', yield_timeout_ms: 50 });
     assert.equal(bg.details.sessionName, 'test');
     assert.match(bg.content[0].text, /first/);
-    assert.match(bg.content[0].text, /Command elapsed: [\d.]+s; waited: [\d.]+s this call/);
+    assert.match(bg.content[0].text, /Command elapsed: [\d.]+s\. Full output:/);
+    assert.doesNotMatch(bg.content[0].text, /waited:/);
+    assert.equal(bg.details.waitedSeconds, undefined);
     assert.match(bg.content[0].text, /Use interact_bash to send stdin or read new output/);
     assert.equal(fs.readFileSync(bg.details.fullOutputPath, 'utf8'), 'first');
     const polled = await run(interact, { session_name: 'test', yield_timeout_ms: 10 });
     assert.equal(polled.details.sessionName, 'test');
     assert.match(polled.content[0].text, /Running bash session: test/);
+    assert.match(polled.content[0].text, /Command elapsed: [\d.]+s; waited: [\d.]+s this call\. Full output:/);
+    assert.ok(polled.details.waitedSeconds >= 0);
     assert.doesNotMatch(polled.content[0].text, /Use interact_bash|close_bash to stop it/);
     const ended = await run(interact, { session_name: 'test', stdin: 'hello\n', yield_timeout_ms: 1000 });
     assert.match(ended.content[0].text, /second:hello/);
     assert.doesNotMatch(ended.content[0].text, /first/);
     assert.equal(fs.readFileSync(bg.details.fullOutputPath, 'utf8'), 'firstsecond:hello');
     assert.equal(ended.details.sessionName, undefined);
+    assert.match(ended.content[0].text, /\[Command ran for [\d.]+s; waited: [\d.]+s this call\.\]$/);
+    assert.ok(ended.details.waitedSeconds >= 0);
     assert.ok(ended.details.elapsedSeconds >= bg.details.elapsedSeconds);
     assert.rejects(run(interact, { session_name: 'test', yield_timeout_ms: 0 }), /Unknown bash session/);
     fs.unlinkSync(bg.details.fullOutputPath);
 
     const truncated = await run(bash, { command: 'head -c 80000 /dev/zero | tr "\\0" x', yield_timeout_ms: 1000 });
     assert.equal(truncated.details.truncation.truncated, true);
+    assert.match(statusLine(truncated), /^\[Command ran for [\d.]+s\. Showing first [\d.]+KB and last [\d.]+KB of 78\.1KB \(last line is 78\.1KB\)\. Full output: .+\]$/);
+    assert.match(truncated.content[0].text, /\.\.\. \[middle output omitted\] \.\.\./);
+    assert.equal(truncated.details.waitedSeconds, undefined);
+    assert.equal(truncated.details.truncation.outputBytes <= 50 * 1024, true);
     assert.equal(truncated.content[0].text.length < 52000, true);
     assert.equal(fs.statSync(truncated.details.fullOutputPath).size, 80000);
     fs.unlinkSync(truncated.details.fullOutputPath);
 
     const newlineTruncated = await run(bash, { command: 'printf "short\\n"; head -c 70000 /dev/zero | tr "\\0" x; printf "\\n"', yield_timeout_ms: 1000 });
     assert.equal(newlineTruncated.details.truncation.lastLinePartial, true);
-    assert.match(newlineTruncated.content[0].text, /line is 68\.4KB/);
+    assert.match(statusLine(newlineTruncated), /last line is 68\.4KB/);
     fs.unlinkSync(newlineTruncated.details.fullOutputPath);
 
     const auto = await run(bash, { command: 'sleep 30', yield_timeout_ms: 0 });
@@ -119,6 +130,51 @@ test('foreground and background bash', async () => {
     const pending = bash.execute('id', { command: 'sleep 30', yield_timeout_ms: 300000 }, ac.signal);
     setTimeout(() => ac.abort(), 50);
     await assert.rejects(pending, /aborted/);
+  } finally { assert.deepEqual(await shutdown(), []); }
+});
+
+test('truncation keeps both ends and reports the full log in one status line', async () => {
+  const { tools, shutdown } = (await loadTools())(process.cwd());
+  const [bash, interact, close] = tools;
+  try {
+    const finished = await run(bash, { command: 'seq 1 2500', yield_timeout_ms: 1000 });
+    assert.equal(finished.details.truncation.truncatedBy, 'lines');
+    assert.equal(finished.details.truncation.outputLines, 2000); // 999 + marker + 1000
+    assert.match(finished.content[0].text, /^1\n2\n/);
+    assert.match(finished.content[0].text, /999\n\.\.\. \[middle output omitted\] \.\.\.\n1501\n/);
+    assert.match(statusLine(finished), /^\[Command ran for [\d.]+s\. Showing lines 1-999 and 1501-2500 of 2500\. Full output: .+\]$/);
+    assert.equal(fs.readFileSync(finished.details.fullOutputPath, 'utf8').trim().split('\n').length, 2500);
+    fs.unlinkSync(finished.details.fullOutputPath);
+
+    const staged = await run(bash, { command: 'seq 1 2500; read x; seq 2501 5000; read x; seq 5001 7500', session_name: 'staged', yield_timeout_ms: 500 });
+    assert.equal(staged.details.sessionName, 'staged');
+    assert.match(statusLine(staged), /^\[Running bash session: staged\. Command elapsed: [\d.]+s\. Showing lines 1-999 and 1501-2500 of 2500\. Full output: .+Use interact_bash/);
+    assert.equal(statusLine(staged).match(/Full output:/g)?.length, 1);
+    const running = await run(interact, { session_name: 'staged', stdin: 'go\n', yield_timeout_ms: 500 });
+    assert.equal(running.details.sessionName, 'staged');
+    assert.match(statusLine(running), /^\[Running bash session: staged\. Command elapsed: [\d.]+s; waited: [\d.]+s this call\. Showing lines 1-999 and 1501-2500 of 2500\. Full output: .+\]$/);
+    const ended = await run(interact, { session_name: 'staged', stdin: 'go\n', yield_timeout_ms: 1000 });
+    assert.equal(ended.details.sessionName, undefined);
+    assert.match(statusLine(ended), /^\[Command ran for [\d.]+s; waited: [\d.]+s this call\. Showing lines 1-999 and 1501-2500 of 2500\. Full output: .+\]$/);
+    assert.equal(fs.readFileSync(staged.details.fullOutputPath, 'utf8').trim().split('\n').length, 7500);
+    fs.unlinkSync(staged.details.fullOutputPath);
+
+    const toClose = await run(bash, { command: 'sleep 0.05; seq 1 2500; sleep 30', session_name: 'to-close', yield_timeout_ms: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const closed = await run(close, { session_name: 'to-close' });
+    assert.match(statusLine(closed), /^\[Closed bash session to-close\. Command ran for [\d.]+s\. Showing lines 1-999 and 1501-2500 of 2500\. Full output: .+\]$/);
+    assert.equal(fs.readFileSync(toClose.details.fullOutputPath, 'utf8').trim().split('\n').length, 2500);
+    fs.unlinkSync(toClose.details.fullOutputPath);
+
+    const huge = await run(bash, { command: 'printf START; head -c 300000 /dev/zero | tr "\\0" x; printf END', yield_timeout_ms: 1000 });
+    assert.equal(huge.details.truncation.truncatedBy, 'bytes');
+    assert.equal(huge.details.truncation.outputBytes <= 50 * 1024, true);
+    assert.match(huge.content[0].text, /^STARTx+/);
+    assert.match(huge.content[0].text, /\.\.\. \[middle output omitted\] \.\.\./);
+    assert.match(huge.content[0].text, /x+END\n\n\[Command ran for/);
+    assert.match(statusLine(huge), /Showing first [\d.]+KB and last [\d.]+KB of 293\.0KB/);
+    assert.equal(fs.statSync(huge.details.fullOutputPath).size, 300008);
+    fs.unlinkSync(huge.details.fullOutputPath);
   } finally { assert.deepEqual(await shutdown(), []); }
 });
 
