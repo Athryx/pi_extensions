@@ -4,6 +4,7 @@ import { access, unlink } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { spawn, type ChildProcess } from "node:child_process";
 import { waitForChildProcess } from "./child-process.ts";
 import { getShellConfig, killProcessTree } from "./shell.ts";
@@ -29,6 +30,8 @@ export interface SessionResult {
 	error?: Error;
 	snapshot: OutputSnapshot;
 	lastLineBytes: number;
+	elapsedMs: number;
+	waitedMs: number;
 }
 
 export class BashSession {
@@ -39,6 +42,8 @@ export class BashSession {
 	private exitCode: number | null = null;
 	private error?: Error;
 	private finished = false;
+	private readonly startedAt = performance.now();
+	private finishedAt?: number;
 	busy = false;
 
 	private constructor(readonly name: string, readonly outputPath: string, child: ChildProcess, log: WriteStream) {
@@ -71,6 +76,7 @@ export class BashSession {
 			} catch (error) {
 				this.error = error instanceof Error ? error : new Error(String(error));
 			} finally {
+				this.finishedAt = performance.now();
 				child.stdout?.off("data", onData);
 				child.stderr?.off("data", onData);
 				log.off("drain", onDrain);
@@ -135,6 +141,7 @@ export class BashSession {
 
 	async collect(ms: number, signal?: AbortSignal): Promise<SessionResult> {
 		if (signal?.aborted) throw new Error("aborted");
+		const waitStartedAt = performance.now();
 		let timer: NodeJS.Timeout | undefined;
 		let abort: (() => void) | undefined;
 		try {
@@ -160,7 +167,16 @@ export class BashSession {
 		output.finish();
 		const snapshot = output.snapshot();
 		this.output = new OutputAccumulator({ persistOutput: false });
-		return { finished: this.finished, exitCode: this.exitCode, error: this.error, snapshot, lastLineBytes: output.getLastLineBytes() };
+		const now = performance.now();
+		return {
+			finished: this.finished,
+			exitCode: this.exitCode,
+			error: this.error,
+			snapshot,
+			lastLineBytes: output.getLastLineBytes(),
+			elapsedMs: (this.finishedAt ?? now) - this.startedAt,
+			waitedMs: now - waitStartedAt,
+		};
 	}
 }
 

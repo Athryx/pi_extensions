@@ -12,7 +12,7 @@ async function load() {
     plugins: [{ name: 'stub', setup(build) {
       build.onResolve({ filter: /^(typebox|@earendil-works\/pi-(tui|coding-agent))$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
       build.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ loader: 'js', contents: {
-        typebox: 'export const Type = { Object: (o) => o, String: () => ({}), Optional: (o) => o, Array: (o) => o };',
+        typebox: 'export const Type = { Object: (o, options) => ({ ...o, ...options }), String: () => ({}), Optional: (o) => o, Array: (o) => o };',
         '@earendil-works/pi-coding-agent': 'export const truncateHead = (s) => ({ content: s });',
         '@earendil-works/pi-tui': `export const Key = { escape: 'escape', tab: 'tab', right: 'right', left: 'left', enter: 'enter', up: 'up', down: 'down', shift: (s) => 'shift+' + s };
           export const matchesKey = (a,b) => a === b;
@@ -45,6 +45,7 @@ test('parallel questions share one form; notes and answer are returned independe
   init(pi);
   pi.start({}, { mode: 'tui' });
   assert.equal(tool.name, 'ask_question');
+  assert.equal(tool.parameters.additionalProperties, false);
   assert.match(tool.promptSnippet, /Ask the user/);
   assert.match(tool.promptGuidelines.join(' '), /same assistant turn/);
   assert.match(tool.promptGuidelines.join(' '), /\(Recommended\)/);

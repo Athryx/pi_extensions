@@ -15,7 +15,7 @@ async function load() {
     plugins: [{ name: 'stub', setup(build) {
       build.onResolve({ filter: /^(typebox|@earendil-works\/pi-coding-agent)$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
       build.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ loader: 'js', contents: args.path === 'typebox'
-        ? 'export const Type = { Object: (o) => o, Boolean: () => ({}) };' : 'export {};' }));
+        ? 'export const Type = { Object: (o, options) => ({ ...o, ...options }), Boolean: () => ({}) };' : 'export {};' }));
     }}],
   })).outputFiles[0].text;
   const module = { exports: {} };
@@ -65,6 +65,7 @@ test('interactive plan lifecycle, prompt, approval and exit notice', async () =>
     const h = harness(init, cwd);
     assert.ok(h.commands.plan && h.commands.implement && h.commands['exit-plan']);
     assert.ok(h.active().includes('finish_plan'));
+    assert.equal(h.tools.finish_plan.parameters.additionalProperties, false);
     assert.match(h.tools.finish_plan.promptGuidelines[0], /unless plan mode is active/);
     const inactive = await h.tools.finish_plan.execute('id', { approved: true }, undefined, undefined, h.ctx);
     assert.match(inactive.content[0].text, /not active/);

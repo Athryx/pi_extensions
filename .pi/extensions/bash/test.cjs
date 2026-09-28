@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const piRoot = path.resolve(path.dirname(fs.realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim())), '../..');
@@ -24,6 +25,26 @@ return m.exports;
 async function loadTools() { return (await loadExtension()).createBashTools; }
 const run = async (tool, args) => tool.execute('id', args);
 
+test('bash tools reject unknown argument names', async () => {
+  const { Check } = await import(require.resolve('typebox/value', { paths: [piRoot] }));
+  const { validateToolArguments } = await import(pathToFileURL(path.join(piRoot, 'node_modules/@earendil-works/pi-ai/dist/utils/validation.js')).href);
+  const { tools, shutdown } = (await loadTools())(process.cwd());
+  const [bash, interact, close] = tools;
+  try {
+    assert.equal(Check(bash.parameters, { command: 'true', yield_timeout_ms: 60000 }), true);
+    assert.equal(Check(bash.parameters, { command: 'true', yield_time_ms: 60000 }), false);
+    assert.equal(Check(interact.parameters, { session_name: 'bash1', yield_time_ms: 60000 }), false);
+    assert.equal(Check(close.parameters, { session_name: 'bash1', yield_time_ms: 60000 }), false);
+    for (const [tool, args] of [
+      [bash, { command: 'true', yield_time_ms: 60000 }],
+      [interact, { session_name: 'bash1', yield_time_ms: 60000 }],
+      [close, { session_name: 'bash1', yield_time_ms: 60000 }],
+    ]) {
+      assert.throws(() => validateToolArguments(tool, { name: tool.name, arguments: args }), /Validation failed.*must not have additional properties/s);
+    }
+  } finally { assert.deepEqual(await shutdown(), []); }
+});
+
 // Start with stdout on each side of a yield; test that polling consumes only
 // new output, stdin is written verbatim, and the log retains everything.
 test('foreground and background bash', async () => {
@@ -31,19 +52,28 @@ test('foreground and background bash', async () => {
   const { tools, shutdown } = createBashTools(process.cwd());
   const [bash, interact, close] = tools;
   try {
-    const fg = await run(bash, { command: 'printf foreground', yield_timeout_ms: 1000 });
-    assert.equal(fg.content[0].text, 'foreground');
+    const fg = await run(bash, { command: 'sleep 0.05; printf foreground', yield_timeout_ms: 1000 });
+    assert.match(fg.content[0].text, /^foreground\n\n\[Command ran for [\d.]+s; waited: [\d.]+s this call\.\]$/);
     assert.equal(fg.details.fullOutputPath, undefined);
+    assert.ok(fg.details.elapsedSeconds >= 0.04);
+    assert.ok(fg.details.waitedSeconds >= 0.04);
 
     const bg = await run(bash, { command: 'printf first; read x; printf "second:%s" "$x"', session_name: 'test', yield_timeout_ms: 50 });
     assert.equal(bg.details.sessionName, 'test');
     assert.match(bg.content[0].text, /first/);
+    assert.match(bg.content[0].text, /Command elapsed: [\d.]+s; waited: [\d.]+s this call/);
+    assert.match(bg.content[0].text, /Use interact_bash to send stdin or read new output/);
     assert.equal(fs.readFileSync(bg.details.fullOutputPath, 'utf8'), 'first');
+    const polled = await run(interact, { session_name: 'test', yield_timeout_ms: 10 });
+    assert.equal(polled.details.sessionName, 'test');
+    assert.match(polled.content[0].text, /Running bash session: test/);
+    assert.doesNotMatch(polled.content[0].text, /Use interact_bash|close_bash to stop it/);
     const ended = await run(interact, { session_name: 'test', stdin: 'hello\n', yield_timeout_ms: 1000 });
     assert.match(ended.content[0].text, /second:hello/);
     assert.doesNotMatch(ended.content[0].text, /first/);
     assert.equal(fs.readFileSync(bg.details.fullOutputPath, 'utf8'), 'firstsecond:hello');
     assert.equal(ended.details.sessionName, undefined);
+    assert.ok(ended.details.elapsedSeconds >= bg.details.elapsedSeconds);
     assert.rejects(run(interact, { session_name: 'test', yield_timeout_ms: 0 }), /Unknown bash session/);
     fs.unlinkSync(bg.details.fullOutputPath);
 
@@ -67,6 +97,9 @@ test('foreground and background bash', async () => {
     await new Promise(resolve => setTimeout(resolve, 120));
     const unreadClosed = await run(close, { session_name: 'unread' });
     assert.match(unreadClosed.content[0].text, /close-output/);
+    assert.match(unreadClosed.content[0].text, /\[Closed bash session unread\. Command ran for [\d.]+s\. Full output: .+\]$/);
+    assert.doesNotMatch(unreadClosed.content[0].text, /waited:/);
+    assert.equal(unreadClosed.details.waitedSeconds, undefined);
     assert.equal(unreadClosed.details.fullOutputPath, unread.details.fullOutputPath);
     assert.equal(fs.readFileSync(unread.details.fullOutputPath, 'utf8'), 'close-output');
     fs.unlinkSync(unread.details.fullOutputPath);
@@ -75,10 +108,13 @@ test('foreground and background bash', async () => {
     await assert.rejects(run(bash, { command: 'true', session_name: 'duplicate' }), /already exists/);
     const closed = await run(close, { session_name: 'duplicate' });
     assert.match(closed.content[0].text, /Closed bash session/);
+    assert.doesNotMatch(closed.content[0].text, /waited:/);
+    assert.doesNotMatch(closed.content[0].text, /Use interact_bash|close_bash to stop it/);
     fs.unlinkSync(dup.details.fullOutputPath);
     await assert.rejects(run(bash, { command: 'true', yield_timeout_ms: 300001 }), /yield_timeout_ms/);
     const failed = await run(bash, { command: 'exit 7', yield_timeout_ms: 1000 }).catch(e => e);
     assert.match(failed.message, /Command exited with code 7/);
+    assert.match(failed.message, /Command ran for [\d.]+s/);
     const ac = new AbortController();
     const pending = bash.execute('id', { command: 'sleep 30', yield_timeout_ms: 300000 }, ac.signal);
     setTimeout(() => ac.abort(), 50);

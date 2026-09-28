@@ -6,6 +6,10 @@ Based on `@earendil-works/pi-coding-agent` **0.85.1** (MIT). The `bash` tool ove
 - `interact_bash(session_name, stdin?, yield_timeout_ms?)` writes stdin **verbatim** (no automatic newline) and returns only new stdout/stderr since the last read. Default wait is 1 second when sending stdin and 10 seconds otherwise, max 5 minutes. On exit, the session is removed; exit errors are reported.
 - `close_bash(session_name)` kills the process tree, returns any output since the last read (with the same truncation limits as `interact_bash`), removes the session and retains its log.
 
+`close_bash` reports the total command runtime and log path in one closing status line; it omits poll wait time.
+
+All three tools reject unknown argument names. For example, `yield_time_ms` produces a validation error; use `yield_timeout_ms`. Results report both total command elapsed time and the time spent waiting in the current tool call. Background responses show these times alongside the session name so a yield is not mistaken for command completion. Only the initial `bash` response explains how to use `interact_bash` and `close_bash`; later polls omit that reminder.
+
 Background sessions append all combined stdout/stderr to a temp log from process start, including output emitted between tool calls. Each response keeps only the last 2000 lines / 50KB of its own output interval; the log retains everything. Foreground commands that finish during the wait discard their log unless their output was truncated or they failed. Session shutdown kills outstanding processes but does not delete their logs. If any background commands are stopped, a model-visible message listing their session names and log paths is saved in the Pi session so the agent knows they cannot be resumed. No message is added when none were stopped. Sessions cannot be resumed after a Pi session switch/reload.
 
 Run `node --test .pi/extensions/bash/test.cjs` to smoke-test the tools (requires `pi` on PATH).

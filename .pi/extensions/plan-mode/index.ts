@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI) {
       promptGuidelines: ["Do not call finish_plan unless plan mode is active and the user explicitly asks to exit or implement the plan."],
       parameters: Type.Object({
         approved: Type.Boolean({ description: "True only when the user explicitly approves or asks to implement the plan; false for exit without approval" }),
-      }),
+      }, { additionalProperties: false }),
       async execute(_id, params, _signal, _update, toolCtx) {
         if (!state.active) return { content: [{ type: "text", text: "Plan mode is not active; nothing changed." }] };
         if (params.approved && !(await planIsWritten())) {

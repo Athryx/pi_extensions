@@ -8,19 +8,23 @@ const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
 	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 10000, max ${MAX_YIELD_MS}); return a session if still running` })),
 	session_name: Type.Optional(Type.String({ description: "Optional unique name for a background bash session" })),
-});
+}, { additionalProperties: false });
 const interactSchema = Type.Object({
 	session_name: Type.String({ description: "Name of the background bash session" }),
 	stdin: Type.Optional(Type.String({ description: "Exact text to write to stdin (no newline added); omit or use empty string to just poll output" })),
 	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 1000 when sending stdin, 10000 when polling, max ${MAX_YIELD_MS})` })),
-});
-const closeSchema = Type.Object({ session_name: Type.String({ description: "Name of the background bash session to kill" }) });
+}, { additionalProperties: false });
+const closeSchema = Type.Object({ session_name: Type.String({ description: "Name of the background bash session to kill" }) }, { additionalProperties: false });
 
 interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
 	sessionName?: string;
+	elapsedSeconds: number;
+	waitedSeconds?: number;
 }
+
+function seconds(ms: number): string { return `${(ms / 1000).toFixed(1)}s`; }
 
 function getBashEnvironment(ctx: ExtensionContext | undefined): NodeJS.ProcessEnv {
 	const env = { ...getShellEnv() };
@@ -42,11 +46,21 @@ function getBashEnvironment(ctx: ExtensionContext | undefined): NodeJS.ProcessEn
 	return env;
 }
 
-function formatResult(result: SessionResult, name: string, path: string, background: boolean, reportExitStatus = true) {
+function formatResult(
+	result: SessionResult,
+	name: string,
+	path: string,
+	options: { background: boolean; closed?: boolean; showSessionInstructions?: boolean },
+) {
+	const { background, closed = false, showSessionInstructions = false } = options;
 	const { snapshot, lastLineBytes } = result;
 	const t = snapshot.truncation;
 	let text = snapshot.content || "(no new output)";
-	const details: BashToolDetails = { fullOutputPath: path };
+	const details: BashToolDetails = {
+		fullOutputPath: path,
+		elapsedSeconds: result.elapsedMs / 1000,
+		...(closed ? {} : { waitedSeconds: result.waitedMs / 1000 }),
+	};
 	if (t.truncated) {
 		details.truncation = t;
 		const start = t.totalLines - t.outputLines + 1;
@@ -60,11 +74,16 @@ function formatResult(result: SessionResult, name: string, path: string, backgro
 	}
 	if (background) {
 		details.sessionName = name;
-		text += `\n\n[Running bash session: ${name}. Full output: ${path}. Use interact_bash to send stdin or read new output; close_bash to stop it.]`;
-	} else if (reportExitStatus && result.error) {
-		throw new Error(`${text}\n\n${result.error.message}`);
-	} else if (reportExitStatus && result.exitCode !== 0 && result.exitCode !== null) {
-		throw new Error(`${text}\n\nCommand exited with code ${result.exitCode}`);
+		const instructions = showSessionInstructions ? " Use interact_bash to send stdin or read new output; close_bash to stop it." : "";
+		text += `\n\n[Running bash session: ${name}. Command elapsed: ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call. Full output: ${path}.${instructions}]`;
+	} else if (closed) {
+		text += `\n\n[Closed bash session ${name}. Command ran for ${seconds(result.elapsedMs)}. Full output: ${path}]`;
+	} else if (result.error) {
+		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}]\n${result.error.message}`);
+	} else if (result.exitCode !== 0 && result.exitCode !== null) {
+		throw new Error(`${text}\n\n[Command ran for ${seconds(result.elapsedMs)}]\nCommand exited with code ${result.exitCode}`);
+	} else {
+		text += `\n\n[Command ran for ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call.]`;
 	}
 	return { content: [{ type: "text" as const, text }], details };
 }
@@ -91,10 +110,13 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 					sessions.remove(session.name);
 					if (!result.snapshot.truncation.truncated && !result.error && result.exitCode === 0) {
 						await session.discardLog();
-						return { content: [{ type: "text", text: result.snapshot.content || "(no output)" }], details: {} };
+						return {
+							content: [{ type: "text", text: `${result.snapshot.content || "(no output)"}\n\n[Command ran for ${seconds(result.elapsedMs)}; waited: ${seconds(result.waitedMs)} this call.]` }],
+							details: { elapsedSeconds: result.elapsedMs / 1000, waitedSeconds: result.waitedMs / 1000 },
+						};
 					}
 				}
-				return formatResult(result, session.name, session.outputPath, !result.finished);
+			return formatResult(result, session.name, session.outputPath, { background: !result.finished, showSessionInstructions: true });
 			} catch (error) {
 				// An aborted initial call must not leave behind an unreferenced process.
 				if (signal?.aborted) {
@@ -124,7 +146,7 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 				if (stdin) session.write(stdin);
 				const result = await session.collect(ms, signal);
 				if (result.finished) sessions.remove(session_name);
-				return formatResult(result, session_name, session.outputPath, !result.finished);
+			return formatResult(result, session_name, session.outputPath, { background: !result.finished });
 			} finally {
 				session.busy = false;
 			}
@@ -143,8 +165,7 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 			try {
 				await session.close();
 				const result = await session.collect(0);
-				const { content, details } = formatResult(result, session_name, session.outputPath, false, false);
-				content[0].text += `\n\n[Closed bash session ${session_name}. Full output: ${session.outputPath}]`;
+			const { content, details } = formatResult(result, session_name, session.outputPath, { background: false, closed: true });
 				sessions.remove(session_name);
 				return { content, details };
 			} finally {

@@ -5,7 +5,7 @@ import { Type } from "typebox";
 const schema = Type.Object({
   question: Type.String({ description: "Question to show the user" }),
   choices: Type.Optional(Type.Array(Type.String(), { default: [], description: "Choices in display order; omit or use [] for a free-response question" })),
-});
+}, { additionalProperties: false });
 
 type Question = { id: string; question: string; choices: string[] };
 type Answer = { answer: string; choiceIndex?: number; notes: string };
