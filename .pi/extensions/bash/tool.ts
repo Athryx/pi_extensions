@@ -6,7 +6,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
-	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 10000, max ${MAX_YIELD_MS}); return a session if still running` })),
+	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 60000, max ${MAX_YIELD_MS}); return a session if still running` })),
 	session_name: Type.Optional(Type.String({ description: "Optional unique name for a background bash session" })),
 }, { additionalProperties: false });
 const interactSchema = Type.Object({
@@ -100,13 +100,13 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 
 	const bash: ToolDefinition<typeof bashSchema, BashToolDetails> = {
 		name: "bash", label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr, truncated to the last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Waits up to yield_timeout_ms (default 10000, max ${MAX_YIELD_MS}); if still running, returns a named background session. Background output is continuously saved to a file.`,
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr, truncated to the last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Waits up to yield_timeout_ms (default 60000, max ${MAX_YIELD_MS}); if still running, returns a named background session. Background output is continuously saved to a file.`,
 		promptSnippet: "Execute bash commands; long-running commands yield a session for interact_bash/close_bash",
 		promptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 		parameters: bashSchema,
 		constrainedSampling: process.env.PI_EXPERIMENTAL === "1" ? { type: "json_schema", strict: "prefer" } : undefined,
 		async execute(_id, { command, yield_timeout_ms, session_name }, signal, _onUpdate, ctx) {
-			const ms = yieldMs(yield_timeout_ms, 10_000);
+			const ms = yieldMs(yield_timeout_ms, 60_000);
 			if (signal?.aborted) throw new Error("Command aborted");
 			const resolved = options.commandPrefix ? `${options.commandPrefix}\n${command}` : command;
 			const session = await sessions.start(session_name, resolved, ctx?.cwd || cwd, getBashEnvironment(ctx), options.shellPath);

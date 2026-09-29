@@ -2,7 +2,7 @@
 
 Based on `@earendil-works/pi-coding-agent` **0.85.1** (MIT). The `bash` tool overrides Pi's built-in execution while retaining its renderer. Shell settings, command prefix, PI_* session variables, process-tree killing, and output truncation are retained.
 
-- `bash(command, yield_timeout_ms?, session_name?)` waits up to 10 seconds by default (max 5 minutes). If the command is still running, it returns a background session name (`bash1`, `bash2`, … unless named explicitly) and a log path. Names must be unique among active sessions.
+- `bash(command, yield_timeout_ms?, session_name?)` waits up to 60 seconds by default (max 5 minutes). If the command is still running, it returns a background session name (`bash1`, `bash2`, … unless named explicitly) and a log path. Names must be unique among active sessions.
 - `interact_bash(session_name, stdin?, yield_timeout_ms?)` writes stdin **verbatim** (no automatic newline) and returns only new stdout/stderr since the last read. Default wait is 1 second when sending stdin and 10 seconds otherwise, max 5 minutes. On exit, the session is removed; exit errors are reported.
 - `close_bash(session_name)` kills the process tree, returns any output since the last read (with the same truncation limits as `interact_bash`), removes the session and retains its log.
 
@@ -20,7 +20,7 @@ Each response starts with stdout and stderr received in that call, or `(no new o
 | Tool result | Without truncation | With truncation |
 | --- | --- | --- |
 | `bash` exits | `[Command ran for 0.2s.]` | `[Command ran for 0.2s. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log]` |
-| `bash` keeps running | `[Running bash session: bash1. Command elapsed: 10.0s. Full output: /tmp/pi-bash-abc.log. Use interact_bash to send stdin or read new output; close_bash to stop it.]` | `[Running bash session: bash1. Command elapsed: 10.0s. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log. Use interact_bash to send stdin or read new output; close_bash to stop it.]` |
+| `bash` keeps running | `[Running bash session: bash1. Command elapsed: 60.0s. Full output: /tmp/pi-bash-abc.log. Use interact_bash to send stdin or read new output; close_bash to stop it.]` | `[Running bash session: bash1. Command elapsed: 60.0s. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log. Use interact_bash to send stdin or read new output; close_bash to stop it.]` |
 | `interact_bash` sees exit | `[Command ran for 12.4s; waited: 2.4s this call.]` | `[Command ran for 12.4s; waited: 2.4s this call. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log]` |
 | `interact_bash` keeps running | `[Running bash session: bash1. Command elapsed: 11.0s; waited: 1.0s this call. Full output: /tmp/pi-bash-abc.log.]` | `[Running bash session: bash1. Command elapsed: 11.0s; waited: 1.0s this call. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log.]` |
 | `close_bash` | `[Closed bash session bash1. Command ran for 12.0s. Full output: /tmp/pi-bash-abc.log]` | `[Closed bash session bash1. Command ran for 12.0s. Showing lines 1-999 and 1501-2500 of 2500. Full output: /tmp/pi-bash-abc.log]` |
