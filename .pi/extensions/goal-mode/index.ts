@@ -146,7 +146,7 @@ export default function (pi: ExtensionAPI) {
     pi.sendMessage({
       customType: REMINDER_KEY, display: false,
       details: { goal, generation },
-      content: `Current goal: ${JSON.stringify(goal)}. Check whether it is completed or blocked. If there is strong evidence for either, call set_goal_status with that status and explain the evidence in reason. Otherwise keep working on the goal; do not just finish with a final answer. Respect any active plan-mode approval restrictions.`,
+      content: `Current goal: ${JSON.stringify(goal)}. Check whether it is completed or blocked. If there is strong evidence for either, call set_goal_status with that status and explain the evidence in reason. Otherwise keep working on the goal; do not just finish with a final answer.`,
     }, { deliverAs: "followUp", triggerTurn: true });
   });
 }

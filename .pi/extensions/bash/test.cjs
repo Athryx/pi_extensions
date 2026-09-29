@@ -23,7 +23,7 @@ new Function('module', 'exports', 'require', bundle)(m, m.exports, require);
 return m.exports;
 }
 async function loadTools() { return (await loadExtension()).createBashTools; }
-const run = async (tool, args) => tool.execute('id', args);
+const run = async (tool, args) => tool.execute('id', tool.prepareArguments ? tool.prepareArguments(args) : args);
 const statusLine = (result) => result.content[0].text.split('\n\n').at(-1);
 
 test('bash tools reject unknown argument names', async () => {
@@ -32,16 +32,30 @@ test('bash tools reject unknown argument names', async () => {
   const { tools, shutdown } = (await loadTools())(process.cwd());
   const [bash, interact, close] = tools;
   try {
-    assert.equal(Check(bash.parameters, { command: 'true', yield_timeout_ms: 60000 }), true);
-    assert.equal(Check(bash.parameters, { command: 'true', yield_time_ms: 60000 }), false);
-    assert.equal(Check(interact.parameters, { session_name: 'bash1', yield_time_ms: 60000 }), false);
+    assert.equal(Check(bash.parameters, { command: 'true', yield_time_ms: 60000 }), true);
+    assert.equal(Check(interact.parameters, { session_name: 'bash1', yield_time_ms: 60000 }), true);
+    for (const [tool, base] of [[bash, { command: 'true' }], [interact, { session_name: 'bash1' }]]) {
+      assert.doesNotMatch(JSON.stringify({ parameters: tool.parameters, description: tool.description,
+        promptSnippet: tool.promptSnippet, promptGuidelines: tool.promptGuidelines }), /yield_timeout_ms/);
+      for (const value of [0, 60000]) {
+        const legacy = { ...base, yield_timeout_ms: value };
+        const prepared = tool.prepareArguments(legacy);
+        assert.deepEqual(prepared, { ...base, yield_time_ms: value });
+        assert.equal(legacy.yield_timeout_ms, value); // No mutation of stored arguments.
+        assert.deepEqual(validateToolArguments(tool, { name: tool.name, arguments: prepared }), prepared);
+      }
+      assert.deepEqual(tool.prepareArguments({ ...base, yield_time_ms: 0, yield_timeout_ms: 60000 }),
+        { ...base, yield_time_ms: 0 });
+      assert.equal(Check(tool.parameters, tool.prepareArguments({ ...base, yield_timeout_ms: null })), false);
+      assert.equal(Check(tool.parameters, tool.prepareArguments({ ...base, yield_timeout_ms: {}, extra: 1 })), false);
+    }
     assert.equal(Check(close.parameters, { session_name: 'bash1', yield_time_ms: 60000 }), false);
     for (const [tool, args] of [
-      [bash, { command: 'true', yield_time_ms: 60000 }],
-      [interact, { session_name: 'bash1', yield_time_ms: 60000 }],
+      [bash, { command: 'true', yield_timeout_ms: 60000, extra: 1 }],
+      [interact, { session_name: 'bash1', yield_timeout_ms: 60000, extra: 1 }],
       [close, { session_name: 'bash1', yield_time_ms: 60000 }],
     ]) {
-      assert.throws(() => validateToolArguments(tool, { name: tool.name, arguments: args }), /Validation failed.*must not have additional properties/s);
+      assert.throws(() => validateToolArguments(tool, { name: tool.name, arguments: tool.prepareArguments ? tool.prepareArguments(args) : args }), /Validation failed.*must not have additional properties/s);
     }
   } finally { assert.deepEqual(await shutdown(), []); }
 });
@@ -53,7 +67,7 @@ test('foreground and background bash', async () => {
   const { tools, shutdown } = createBashTools(process.cwd());
   const [bash, interact, close] = tools;
   try {
-    const fg = await run(bash, { command: 'sleep 0.05; printf foreground', yield_timeout_ms: 1000 });
+    const fg = await run(bash, { command: 'sleep 0.05; printf foreground', yield_time_ms: 1000 });
     assert.match(fg.content[0].text, /^foreground\n\n\[Command ran for [\d.]+s\.\]$/);
     assert.equal(fg.details.fullOutputPath, undefined);
     assert.ok(fg.details.elapsedSeconds >= 0.04);
@@ -67,7 +81,7 @@ test('foreground and background bash', async () => {
     assert.equal(bg.details.waitedSeconds, undefined);
     assert.match(bg.content[0].text, /Use interact_bash to send stdin or read new output/);
     assert.equal(fs.readFileSync(bg.details.fullOutputPath, 'utf8'), 'first');
-    const polled = await run(interact, { session_name: 'test', yield_timeout_ms: 10 });
+    const polled = await run(interact, { session_name: 'test', yield_time_ms: 10 });
     assert.equal(polled.details.sessionName, 'test');
     assert.match(polled.content[0].text, /Running bash session: test/);
     assert.match(polled.content[0].text, /Command elapsed: [\d.]+s; waited: [\d.]+s this call\. Full output:/);
@@ -122,12 +136,12 @@ test('foreground and background bash', async () => {
     assert.doesNotMatch(closed.content[0].text, /waited:/);
     assert.doesNotMatch(closed.content[0].text, /Use interact_bash|close_bash to stop it/);
     fs.unlinkSync(dup.details.fullOutputPath);
-    await assert.rejects(run(bash, { command: 'true', yield_timeout_ms: 300001 }), /yield_timeout_ms/);
+    await assert.rejects(run(bash, { command: 'true', yield_timeout_ms: 300001 }), /yield_time_ms/);
     const failed = await run(bash, { command: 'exit 7', yield_timeout_ms: 1000 }).catch(e => e);
     assert.match(failed.message, /Command exited with code 7/);
     assert.match(failed.message, /Command ran for [\d.]+s/);
     const ac = new AbortController();
-    const pending = bash.execute('id', { command: 'sleep 30', yield_timeout_ms: 300000 }, ac.signal);
+    const pending = bash.execute('id', { command: 'sleep 30', yield_time_ms: 300000 }, ac.signal);
     setTimeout(() => ac.abort(), 50);
     await assert.rejects(pending, /aborted/);
   } finally { assert.deepEqual(await shutdown(), []); }

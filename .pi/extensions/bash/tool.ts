@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getShellEnv } from "./shell.ts";
 import { BashSessions, MAX_YIELD_MS, yieldMs, type SessionResult } from "./session.ts";
@@ -6,15 +6,25 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute" }),
-	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 60000, max ${MAX_YIELD_MS}); return a session if still running` })),
+	yield_time_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 60000, max ${MAX_YIELD_MS}); return a session if still running` })),
 	session_name: Type.Optional(Type.String({ description: "Optional unique name for a background bash session" })),
 }, { additionalProperties: false });
 const interactSchema = Type.Object({
 	session_name: Type.String({ description: "Name of the background bash session" }),
 	stdin: Type.Optional(Type.String({ description: "Exact text to write to stdin (no newline added); omit or use empty string to just poll output" })),
-	yield_timeout_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 1000 when sending stdin, 10000 when polling, max ${MAX_YIELD_MS})` })),
+	yield_time_ms: Type.Optional(Type.Number({ description: `Wait up to this many milliseconds (default 1000 when sending stdin, 10000 when polling, max ${MAX_YIELD_MS})` })),
 }, { additionalProperties: false });
 const closeSchema = Type.Object({ session_name: Type.String({ description: "Name of the background bash session to kill" }) }, { additionalProperties: false });
+
+/** Normalize the unadvertised legacy name before Pi's strict schema validation. */
+function prepareYieldArguments<T>(args: unknown): T {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return args as T;
+	const input = args as Record<string, unknown>;
+	if (!Object.hasOwn(input, "yield_timeout_ms")) return args as T;
+	const { yield_timeout_ms, ...current } = input;
+	if (!Object.hasOwn(current, "yield_time_ms")) current.yield_time_ms = yield_timeout_ms;
+	return current as T;
+}
 
 interface BashToolDetails {
 	truncation?: TruncationResult;
@@ -100,13 +110,14 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 
 	const bash: ToolDefinition<typeof bashSchema, BashToolDetails> = {
 		name: "bash", label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr, truncated to the last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Waits up to yield_timeout_ms (default 60000, max ${MAX_YIELD_MS}); if still running, returns a named background session. Background output is continuously saved to a file.`,
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr, truncated to the last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. Waits up to yield_time_ms (default 60000, max ${MAX_YIELD_MS}); if still running, returns a named background session. Background output is continuously saved to a file.`,
 		promptSnippet: "Execute bash commands; long-running commands yield a session for interact_bash/close_bash",
 		promptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 		parameters: bashSchema,
+		prepareArguments: prepareYieldArguments<Static<typeof bashSchema>>,
 		constrainedSampling: process.env.PI_EXPERIMENTAL === "1" ? { type: "json_schema", strict: "prefer" } : undefined,
-		async execute(_id, { command, yield_timeout_ms, session_name }, signal, _onUpdate, ctx) {
-			const ms = yieldMs(yield_timeout_ms, 60_000);
+		async execute(_id, { command, yield_time_ms, session_name }, signal, _onUpdate, ctx) {
+			const ms = yieldMs(yield_time_ms, 60_000);
 			if (signal?.aborted) throw new Error("Command aborted");
 			const resolved = options.commandPrefix ? `${options.commandPrefix}\n${command}` : command;
 			const session = await sessions.start(session_name, resolved, ctx?.cwd || cwd, getBashEnvironment(ctx), options.shellPath);
@@ -144,11 +155,12 @@ export function createBashTools(cwd: string, options: { shellPath?: string; comm
 
 	const interact: ToolDefinition<typeof interactSchema, BashToolDetails> = {
 		name: "interact_bash", label: "interact_bash",
-		description: `Send text to a running bash session's stdin or poll for new stdout/stderr. Returns only output since the previous call (last ${DEFAULT_MAX_LINES} lines / ${DEFAULT_MAX_BYTES / 1024}KB); full combined output stays in its log. Waits up to yield_timeout_ms (max ${MAX_YIELD_MS}); defaults to 1000ms when sending stdin, 10000ms when polling.`,
+		description: `Send text to a running bash session's stdin or poll for new stdout/stderr. Returns only output since the previous call (last ${DEFAULT_MAX_LINES} lines / ${DEFAULT_MAX_BYTES / 1024}KB); full combined output stays in its log. Waits up to yield_time_ms (max ${MAX_YIELD_MS}); defaults to 1000ms when sending stdin, 10000ms when polling.`,
 		promptSnippet: "Send stdin to or poll a background bash session for new output",
 		parameters: interactSchema,
-		async execute(_id, { session_name, stdin, yield_timeout_ms }, signal) {
-			const ms = yieldMs(yield_timeout_ms, stdin ? 1_000 : 10_000);
+		prepareArguments: prepareYieldArguments<Static<typeof interactSchema>>,
+		async execute(_id, { session_name, stdin, yield_time_ms }, signal) {
+			const ms = yieldMs(yield_time_ms, stdin ? 1_000 : 10_000);
 			const session = sessions.get(session_name);
 			if (session.busy) throw new Error(`Bash session ${session_name} is already being polled`);
 			session.busy = true;

@@ -14,7 +14,7 @@ export const MAX_YIELD_MS = 300_000;
 export function yieldMs(value: number | undefined, fallback: number): number {
 	const ms = value ?? fallback;
 	if (!Number.isInteger(ms) || ms < 0 || ms > MAX_YIELD_MS) {
-		throw new Error(`yield_timeout_ms must be an integer between 0 and ${MAX_YIELD_MS}`);
+		throw new Error(`yield_time_ms must be an integer between 0 and ${MAX_YIELD_MS}`);
 	}
 	return ms;
 }
