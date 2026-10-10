@@ -76,17 +76,19 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "set_goal", label: "Set Goal",
+    executionMode: "sequential",
     description: "Set or replace the current goal and start running it. Call only when the user explicitly requests setting a goal.",
     promptGuidelines: ["Call set_goal only when the user explicitly asks to set a goal; do not turn ordinary requests into goals."],
     parameters: Type.Object({ goal: Type.String({ description: "The user's explicit goal" }) }, { additionalProperties: false }),
     async execute(_id, params, _signal, _update, ctx) {
       const message = setGoal(ctx, params.goal);
-      return { content: [{ type: "text", text: message }] };
+      return { content: [{ type: "text", text: message }], details: undefined };
     },
   });
 
   pi.registerTool({
     name: "set_goal_status", label: "Set Goal Status",
+    executionMode: "sequential",
     description: "Update an existing goal. For completed or blocked, supply a reason explaining strong evidence for that status; never invent evidence. Use running only when the user asks to resume a blocked/interrupted goal. Completed clears the goal.",
     promptGuidelines: ["Call set_goal_status(completed or blocked) only with strong evidence, included in reason. Call set_goal_status(running) only when the user asks to resume a blocked goal."],
     parameters: Type.Object({
@@ -95,7 +97,7 @@ export default function (pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     async execute(_id, params, _signal, _update, ctx) {
       const message = setStatus(ctx, params.status, params.reason, true);
-      return { content: [{ type: "text", text: message }] };
+      return { content: [{ type: "text", text: message }], details: undefined };
     },
   });
 
@@ -124,9 +126,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => restore(ctx));
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\n\nGoal mode: Only call set_goal when the user explicitly asks to set a goal. Only call set_goal_status(completed/blocked) when you have strong evidence, and explain that evidence in the reason argument. Call set_goal_status(running) only if the user asks to resume an interrupted blocked goal. Do not declare a running goal finished without updating its status; if it is still running, keep working.",
-  }));
+  pi.on("before_agent_start", (event) => {
+    event.systemPromptOptions.sections.goal_mode = "Goal mode: Only call set_goal when the user explicitly asks to set a goal. Only call set_goal_status(completed/blocked) when you have strong evidence, and explain that evidence in the reason argument. Call set_goal_status(running) only if the user asks to resume an interrupted blocked goal. Do not declare a running goal finished without updating its status; if it is still running, keep working.";
+  });
 
   // A queued reminder may become stale if a user pauses, stops, or replaces the goal.
   // Remove it from LLM context even if Pi already queued the follow-up turn.
@@ -138,15 +140,18 @@ export default function (pi: ExtensionAPI) {
     }),
   }));
 
-  pi.on("agent_end", (event, ctx) => {
-    if (!state.goal || state.status !== "running" || ctx.hasPendingMessages() || ctx.signal?.aborted) return;
-    const last = event.messages.at(-1);
+  pi.on("agent_before_settle", (event, ctx) => {
+    if (!state.goal || state.status !== "running" || event.outcome !== "completed" || !event.context.canContinue || event.continue || ctx.hasPendingMessages() || ctx.signal?.aborted) return;
+    const last = event.context.contextMessages.at(-1);
     if (last?.role !== "assistant" || last.stopReason !== "stop" || last.content.some((item) => item.type === "toolCall")) return;
     const { goal, generation } = state;
-    pi.sendMessage({
-      customType: REMINDER_KEY, display: false,
-      details: { goal, generation },
-      content: `Current goal: ${JSON.stringify(goal)}. Check whether it is completed or blocked. If there is strong evidence for either, call set_goal_status with that status and explain the evidence in reason. Otherwise keep working on the goal; do not just finish with a final answer.`,
-    }, { deliverAs: "followUp", triggerTurn: true });
+    return {
+      entries: [{
+        type: "custom_message", customType: REMINDER_KEY, display: false,
+        details: { goal, generation },
+        content: `Current goal: ${JSON.stringify(goal)}. Check whether it is completed or blocked. If there is strong evidence for either, call set_goal_status with that status and explain the evidence in reason. Otherwise keep working on the goal; do not just finish with a final answer.`,
+      }],
+      continue: true,
+    };
   });
 }

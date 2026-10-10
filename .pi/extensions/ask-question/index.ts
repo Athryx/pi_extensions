@@ -9,6 +9,7 @@ const schema = Type.Object({
 
 type Question = { id: string; question: string; choices: string[] };
 type Answer = { answer: string; choiceIndex?: number; notes: string };
+type QuestionDetails = { question: string; choices: string[]; answer: Answer | null };
 type Pending = { question: Question; resolve: (answer: Answer | null) => void; signal: AbortSignal | undefined };
 
 /** One TUI prompt for the concurrently executing ask_question calls in an assistant turn. */
@@ -170,9 +171,11 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui") return;
     let batch: Pending[] = [];
     let scheduled = false;
-    pi.registerTool({
+    pi.registerTool<typeof schema, QuestionDetails>({
       name: "ask_question",
       label: "Ask Question",
+      exposure: "model-only",
+      executionMode: "parallel",
       description: "Ask the user a question. Choices appear in the supplied order, followed by Other; omit choices for a free response. The user can also add optional notes. Concurrent questions in one assistant turn appear in a single tabbed form.",
       promptSnippet: "Ask the user a question with ordered choices or a free-form response; supports optional notes and batched questions",
       promptGuidelines: [

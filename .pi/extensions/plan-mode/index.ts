@@ -59,21 +59,22 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: "finish_plan",
       label: "Finish Plan Mode",
+      executionMode: "sequential",
       description: "Finish plan mode when the user explicitly asks to leave it or implement the plan. Set approved=true ONLY if the user explicitly approves/requests implementation; set false if they only ask to exit. Do nothing outside plan mode.",
       promptGuidelines: ["Do not call finish_plan unless plan mode is active and the user explicitly asks to exit or implement the plan."],
       parameters: Type.Object({
         approved: Type.Boolean({ description: "True only when the user explicitly approves or asks to implement the plan; false for exit without approval" }),
       }, { additionalProperties: false }),
       async execute(_id, params, _signal, _update, toolCtx) {
-        if (!state.active) return { content: [{ type: "text", text: "Plan mode is not active; nothing changed." }] };
+        if (!state.active) return { content: [{ type: "text", text: "Plan mode is not active; nothing changed." }], details: undefined };
         if (params.approved && !(await planIsWritten())) {
-          return { content: [{ type: "text", text: `Plan mode is still active. Write the plan at ${state.file} before approving it.` }] };
+          return { content: [{ type: "text", text: `Plan mode is still active. Write the plan at ${state.file} before approving it.` }], details: undefined };
         }
         const file = state.file;
         exit(toolCtx, params.approved);
         return { content: [{ type: "text", text: params.approved
           ? `The user explicitly approved the plan in ${file}. Plan mode is exited. Read the plan and implement it now.`
-          : "Exited plan mode without approving the plan. Do not treat this as approval to implement it." }] };
+          : "Exited plan mode without approving the plan. Do not treat this as approval to implement it." }], details: undefined };
       },
     });
     status(ctx);

@@ -196,11 +196,12 @@ test('session shutdown persists a model-visible notice only for stopped backgrou
   const extension = (await loadExtension('index.ts')).default;
   const handlers = new Map();
   const tools = new Map();
-  extension({ on: (name, handler) => handlers.set(name, handler), registerTool: tool => tools.set(tool.name, tool) });
   const notices = [];
+  extension({ on: (name, handler) => handlers.set(name, handler), registerTool: tool => tools.set(tool.name, tool),
+    sendMessage: message => notices.push([message.customType, message.content, message.display]) });
   const ctx = {
     cwd: process.cwd(), isProjectTrusted: () => true,
-    sessionManager: { appendCustomMessageEntry: (...args) => notices.push(args) },
+    sessionManager: {},
   };
   await handlers.get('session_start')({}, ctx);
   await handlers.get('session_shutdown')({}, ctx);

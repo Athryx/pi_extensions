@@ -38,7 +38,14 @@ function harness(init, { saved = [], ui = true } = {}) {
     pending: value => pending = value, idle: value => idle = value };
 }
 const final = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'done' }] };
-const turn = (h, message = final) => h.events.agent_end({ messages: [message] }, h.ctx);
+const turn = (h, message = final, overrides = {}) => {
+  const result = h.events.agent_before_settle({
+    outcome: 'completed', entries: [], continue: false,
+    context: { contextMessages: [message], canContinue: true }, ...overrides,
+  }, h.ctx);
+  for (const entry of result?.entries ?? []) h.sends.push({ kind: 'custom', message: entry });
+  return result;
+};
 const call = (h, name, args) => h.tools[name].execute('id', args, undefined, undefined, h.ctx);
 
 test('tools validate goal, reason, resume and clearing', async () => {
@@ -91,9 +98,14 @@ test('repeated reminders only after normal no-tool final and no queued input', a
   turn(h, { ...final, content: [{ type: 'toolCall' }] });
   h.pending(true); turn(h); h.pending(false);
   assert.equal(h.sends.length, 0);
-  turn(h); turn(h);
+  turn(h, final, { outcome: 'error' });
+  turn(h, final, { outcome: 'aborted' });
+  turn(h, final, { continue: true });
+  turn(h, final, { context: { contextMessages: [final], canContinue: false } });
+  assert.equal(h.sends.length, 0);
+  assert.equal(turn(h).continue, true); turn(h);
   assert.equal(h.sends.length, 2);
-  assert.deepEqual(h.sends[0].options, { deliverAs: 'followUp', triggerTurn: true });
+  assert.equal(h.sends[0].message.type, 'custom_message');
   assert.match(h.sends[0].message.content, /fix tests/);
   await call(h, 'set_goal_status', { status: 'blocked', reason: 'Cannot access server' });
   const filtered = h.events.context({ messages: [{ role: 'custom', ...h.sends[0].message }, { role: 'user', content: 'hello' }] });
@@ -107,5 +119,9 @@ test('busy command queues kickoff and headless tools remain available', async ()
   await h.commands.goal.handler('investigate', h.ctx);
   assert.deepEqual(h.sends[0].options, { deliverAs: 'followUp' });
   assert.ok(h.tools.set_goal_status && h.tools.set_goal);
-  assert.match(h.events.before_agent_start({ systemPrompt: 'Base' }).systemPrompt, /Base/);
+  const event = { systemPrompt: 'Base', systemPromptOptions: { sections: { existing: 'Preserved' } } };
+  assert.equal(h.events.before_agent_start(event), undefined);
+  assert.equal(event.systemPrompt, 'Base');
+  assert.equal(event.systemPromptOptions.sections.existing, 'Preserved');
+  assert.match(event.systemPromptOptions.sections.goal_mode, /Only call set_goal/);
 });

@@ -160,7 +160,7 @@ export class BashSession {
 		}
 		// Ensure the log contains everything shown in this tool result.
 		if (!this.finished && !this.log.destroyed) {
-			await new Promise<void>((resolve) => this.log.write("", resolve));
+			await new Promise<void>((resolve, reject) => this.log.write("", (error) => error ? reject(error) : resolve()));
 		}
 		if (this.error && !this.finished) await this.done;
 		const output = this.output;
