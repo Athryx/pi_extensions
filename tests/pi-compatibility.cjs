@@ -14,10 +14,11 @@ test('all extensions load and execute against the installed pi API', async () =>
   const { loadExtensions } = await host('dist/core/extensions/loader.js');
   const { validateToolArguments } = await host('node_modules/@earendil-works/pi-ai/dist/utils/validation.js');
   const { extensions, errors, runtime } = await loadExtensions(
-    ['ask-question', 'bash', 'goal-mode', 'plan-mode'].map(name => join(cwd, '.pi/extensions', name, 'index.ts')), cwd,
+    ['ask-question', 'bash', 'context', 'goal-mode', 'plan-mode'].map(name => join(cwd, '.pi/extensions', name, 'index.ts')), cwd,
   );
   assert.deepEqual(errors, []);
-  assert.equal(extensions.length, 4);
+  assert.equal(extensions.length, 5);
+  assert.ok(extensions.find(extension => extension.commands.has('context')));
   const { SessionManager } = await host('dist/core/session-manager.js');
   const sessionManager = SessionManager.inMemory(cwd);
   runtime.appendEntry = (customType, data) => sessionManager.appendCustomEntry(customType, data);
