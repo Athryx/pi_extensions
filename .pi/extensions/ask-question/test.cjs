@@ -12,7 +12,7 @@ async function load() {
     plugins: [{ name: 'stub', setup(build) {
       build.onResolve({ filter: /^(typebox|@earendil-works\/pi-(tui|coding-agent))$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
       build.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ loader: 'js', contents: {
-        typebox: 'export const Type = { Object: (o, options) => ({ ...o, ...options }), String: () => ({}), Optional: (o) => o, Array: (o) => o };',
+        typebox: 'export const Type = { Object: (o, options) => ({ ...o, ...options }), String: () => ({}), Optional: (o) => o, Array: (o, options) => ({ items: o, ...options }) };',
         '@earendil-works/pi-coding-agent': 'export const truncateHead = (s) => ({ content: s });',
         '@earendil-works/pi-tui': `export const Key = { escape: 'escape', tab: 'tab', right: 'right', left: 'left', enter: 'enter', up: 'up', down: 'down', shift: (s) => 'shift+' + s };
           export const matchesKey = (a,b) => a === b;
@@ -37,7 +37,7 @@ test('headless mode does not register a tool', async () => {
   assert.equal(tools.length, 0);
 });
 
-test('parallel questions share one form; notes and answer are returned independently', async () => {
+test('multiple questions in one call share one form; notes and answers retain order', async () => {
   const init = await load();
   let tool;
   let ui;
@@ -47,7 +47,9 @@ test('parallel questions share one form; notes and answer are returned independe
   assert.equal(tool.name, 'ask_question');
   assert.equal(tool.parameters.additionalProperties, false);
   assert.match(tool.promptSnippet, /Ask the user/);
-  assert.match(tool.promptGuidelines.join(' '), /same assistant turn/);
+  assert.equal(tool.parameters.questions.minItems, 1);
+  assert.equal(tool.parameters.questions.items.additionalProperties, false);
+  assert.match(tool.promptGuidelines.join(' '), /single ask_question call/);
   assert.match(tool.promptGuidelines.join(' '), /\(Recommended\)/);
   assert.match(tool.promptGuidelines.join(' '), /empty list/);
   let shown = 0;
@@ -57,8 +59,10 @@ test('parallel questions share one form; notes and answer are returned independe
       ui = factory({ requestRender() {} }, { fg: (_, s) => s, bg: (_, s) => s }, {}, resolve);
     });
   } } };
-  const a = tool.execute('a', { question: 'First?', choices: ['one', 'two', 'three'] }, undefined, undefined, ctx);
-  const b = tool.execute('b', { question: 'Second?' }, undefined, undefined, ctx);
+  const pending = tool.execute('a', { questions: [
+    { question: 'First?', choices: ['one', 'two', 'three'] },
+    { question: 'Second?' },
+  ] }, undefined, undefined, ctx);
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(shown, 1);
   ui.render(80);
@@ -78,9 +82,15 @@ test('parallel questions share one form; notes and answer are returned independe
   assert.match(ui.render(80).join('\n'), /free text/);
   ui.handleInput('right'); // submit
   ui.handleInput('enter');
-  const [r1, r2] = await Promise.all([a, b]);
-  assert.deepEqual(r1.details.answer, { answer: 'two', choiceIndex: 2, notes: 'extra' });
-  assert.deepEqual(r2.details.answer, { answer: 'free text', notes: '' });
+  const result = await pending;
+  assert.deepEqual(result.details.questions, [
+    { question: 'First?', choices: ['one', 'two', 'three'], answer: { answer: 'two', choiceIndex: 2, notes: 'extra' } },
+    { question: 'Second?', choices: [], answer: { answer: 'free text', notes: '' } },
+  ]);
+  assert.deepEqual(JSON.parse(result.content[0].text), result.details);
+  const theme = { fg: (_, s) => s };
+  assert.match(tool.renderCall({ questions: [{ question: 'First?' }, { question: 'Second?' }] }, theme).text, /First\?\nSecond\?/);
+  assert.match(tool.renderResult(result, {}, theme).text, /First\?: two \(notes: extra\)\n✓ Second\?: free text/);
 });
 
 test('Other accepts custom text, cancellation resolves every sibling', async () => {
@@ -93,7 +103,7 @@ test('Other accepts custom text, cancellation resolves every sibling', async () 
   const ctx = { ui: { custom: (factory) => new Promise((done) => {
     ui = factory({ requestRender() {} }, { fg: (_, s) => s, bg: (_, s) => s }, {}, done);
   }) } };
-  const custom = tool.execute('a', { question: 'Choose', choices: ['a', 'b', 'c'] }, undefined, undefined, ctx);
+  const custom = tool.execute('a', { questions: [{ question: 'Choose', choices: ['a', 'b', 'c'] }] }, undefined, undefined, ctx);
   await new Promise((resolve) => setTimeout(resolve, 10));
   ui.handleInput('down'); ui.handleInput('down'); ui.handleInput('down');
   ui.handleInput('enter'); ui.handleInput('something else'); ui.handleInput('enter');
@@ -106,12 +116,12 @@ test('Other accepts custom text, cancellation resolves every sibling', async () 
   ui.handleInput('right');
   assert.match(ui.render(80).join('\n'), /something else revised \(notes: a note\)/);
   ui.handleInput('enter');
-  assert.deepEqual((await custom).details.answer, { answer: 'something else revised', notes: 'a note' });
+  assert.deepEqual((await custom).details.questions[0].answer, { answer: 'something else revised', notes: 'a note' });
 
-  const first = tool.execute('b', { question: 'One' }, undefined, undefined, ctx);
-  const second = tool.execute('c', { question: 'Two' }, undefined, undefined, ctx);
+  const first = tool.execute('b', { questions: [{ question: 'One' }, { question: 'Two' }] }, undefined, undefined, ctx);
+  const second = tool.execute('c', { questions: [{ question: 'Three' }] }, undefined, undefined, ctx);
   await new Promise((resolve) => setTimeout(resolve, 10));
   ui.handleInput('escape');
-  assert.equal((await first).details.answer, null);
-  assert.equal((await second).details.answer, null);
+  assert.deepEqual((await first).details.questions.map((q) => q.answer), [null, null]);
+  assert.equal((await second).details.questions[0].answer, null);
 });

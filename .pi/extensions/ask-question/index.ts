@@ -2,17 +2,21 @@ import { truncateHead, type ExtensionAPI, type ExtensionContext } from "@earendi
 import { Editor, type EditorTheme, type Focusable, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-const schema = Type.Object({
+const questionSchema = Type.Object({
   question: Type.String({ description: "Question to show the user" }),
   choices: Type.Optional(Type.Array(Type.String(), { default: [], description: "Choices in display order; omit or use [] for a free-response question" })),
+}, { additionalProperties: false });
+const schema = Type.Object({
+  questions: Type.Array(questionSchema, { minItems: 1, description: "All questions to ask the user in one form, in display order" }),
 }, { additionalProperties: false });
 
 type Question = { id: string; question: string; choices: string[] };
 type Answer = { answer: string; choiceIndex?: number; notes: string };
 type QuestionDetails = { question: string; choices: string[]; answer: Answer | null };
+type BatchDetails = { questions: QuestionDetails[] };
 type Pending = { question: Question; resolve: (answer: Answer | null) => void; signal: AbortSignal | undefined };
 
-/** One TUI prompt for the concurrently executing ask_question calls in an assistant turn. */
+/** One TUI prompt for all questions, including any concurrently executing calls. */
 async function showQuestions(ctx: ExtensionContext, pending: Pending[]): Promise<void> {
   const questions = pending.map((p) => p.question);
   const result = await ctx.ui.custom<Map<string, Answer> | null>((tui, theme, _keys, done) => {
@@ -171,40 +175,58 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui") return;
     let batch: Pending[] = [];
     let scheduled = false;
-    pi.registerTool<typeof schema, QuestionDetails>({
+    pi.registerTool<typeof schema, BatchDetails>({
       name: "ask_question",
       label: "Ask Question",
       exposure: "model-only",
       executionMode: "parallel",
-      description: "Ask the user a question. Choices appear in the supplied order, followed by Other; omit choices for a free response. The user can also add optional notes. Concurrent questions in one assistant turn appear in a single tabbed form.",
-      promptSnippet: "Ask the user a question with ordered choices or a free-form response; supports optional notes and batched questions",
+      description: "Ask the user one or more questions in a single tabbed form. Pass all questions in the questions array. Choices appear in the supplied order, followed by Other; omit choices for a free response. The user can also add optional notes.",
+      promptSnippet: "Ask the user questions in one call with ordered choices or free-form responses and optional notes",
       promptGuidelines: [
-        "Use ask_question when a decision or clarification needs the user's input. Prefer grouping independent questions: call ask_question multiple times in the same assistant turn so they appear together in one navigable form, and wait for all answers before proceeding.",
+        "Use ask_question when a decision or clarification needs the user's input. Group all questions that can be asked together into the questions array in a single ask_question call, rather than making separate calls. Wait for all answers before proceeding.",
         "For ask_question multiple-choice questions, provide three meaningful choices when possible. Put the recommended choice first and append ' (Recommended)' to its text; if none is recommended, do not mark any choice as recommended. Do not include an Other choice yourself; ask_question adds it automatically.",
         "For an ask_question that needs an unrestricted free-form response, omit choices or pass an empty list instead of inventing choices. The user may add optional notes to any answer.",
       ],
       parameters: schema,
       async execute(id, params, signal, _onUpdate, toolCtx) {
-        const answer = await new Promise<Answer | null>((resolve) => {
-          batch.push({ question: { id, question: params.question, choices: params.choices ?? [] }, resolve, signal });
-          if (scheduled) return;
+        const pending = params.questions.map((item, index) =>
+          new Promise<QuestionDetails>((resolve) => {
+            const choices = item.choices ?? [];
+            batch.push({
+              question: { id: `${id}:${index}`, question: item.question, choices },
+              resolve: (answer) => resolve({ question: item.question, choices, answer }),
+              signal,
+            });
+          }),
+        );
+        if (!scheduled) {
           scheduled = true;
-          // Parallel tool executions are started together. Defer one event-loop tick to collect siblings.
+          // Defer one event-loop tick to collect questions from concurrent calls as well.
           setTimeout(() => {
             const group = batch; batch = []; scheduled = false;
             void showQuestions(toolCtx, group).catch(() => group.forEach((item) => item.resolve(null)));
           }, 0);
-        });
-        const text = answer ? JSON.stringify(answer) : "User cancelled the question.";
+        }
+        const questions = await Promise.all(pending);
+        const details = { questions };
+        const text = questions.every((item) => item.answer === null)
+          ? "User cancelled the questions."
+          : JSON.stringify(details);
         return {
           content: [{ type: "text" as const, text: truncateHead(text, { maxBytes: 50_000, maxLines: 2_000 }).content }],
-          details: { question: params.question, choices: params.choices ?? [], answer },
+          details,
         };
       },
-      renderCall(args, theme) { return new Text(theme.fg("toolTitle", "ask_question ") + theme.fg("muted", args.question), 0, 0); },
+      renderCall(args, theme) {
+        const questions = args.questions ?? [];
+        return new Text(theme.fg("toolTitle", "ask_question ") + theme.fg("muted", questions.map((q) => q.question).join("\n")), 0, 0);
+      },
       renderResult(result, _options, theme) {
-        const answer = result.details?.answer;
-        return new Text(answer ? theme.fg("success", `✓ ${answer.answer}${answer.notes ? ` (notes: ${answer.notes})` : ""}`) : theme.fg("warning", "Cancelled"), 0, 0);
+        const questions = result.details?.questions;
+        return new Text(questions?.length ? questions.map(({ question, answer }) =>
+          answer ? theme.fg("success", `✓ ${question}: ${answer.answer}${answer.notes ? ` (notes: ${answer.notes})` : ""}`)
+            : theme.fg("warning", `${question}: Cancelled`),
+        ).join("\n") : theme.fg("warning", "Cancelled"), 0, 0);
       },
     });
   });
