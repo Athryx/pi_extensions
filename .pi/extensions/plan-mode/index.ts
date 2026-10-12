@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { isInteractive, registerInteractiveTool } from "../shared/interactive";
 
 interface PlanState {
   active: boolean;
@@ -247,7 +248,6 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode !== "tui") return;
     state = { active: false, description: "", file: "", exitNotice: false };
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === STATE_KEY && entry.data) {
@@ -256,7 +256,7 @@ export default function (pi: ExtensionAPI) {
     }
     planDirectory = resolve(ctx.cwd, "plans");
 
-    pi.registerTool({
+    registerInteractiveTool(pi, {
       name: "finish_plan",
       label: "Finish Plan Mode",
       executionMode: "sequential",
@@ -266,6 +266,7 @@ export default function (pi: ExtensionAPI) {
         approved: Type.Boolean({ description: "True only when the user explicitly approves or asks to implement the plan; false for exit without approval" }),
       }, { additionalProperties: false }),
       async execute(_id, params, _signal, _update, toolCtx) {
+        if (!isInteractive(toolCtx)) throw new Error("Plan mode is only available to the interactive agent");
         if (!state.active) return { content: [{ type: "text", text: "Plan mode is not active; nothing changed." }], details: undefined };
         let file = state.file;
         if (params.approved) {
@@ -282,13 +283,14 @@ export default function (pi: ExtensionAPI) {
           ? `The user explicitly approved the plan in ${file}. Plan mode is exited. Read the plan and implement it now.`
           : "Exited plan mode without approving the plan. Do not treat this as approval to implement it." }], details: undefined };
       },
-    });
+    }, ctx);
+    if (!isInteractive(ctx)) return;
     status(ctx);
 
     pi.registerCommand("plan", {
       description: "Plan mode: /plan [path|name|description], /plan implement, /plan exit, /plan status",
       handler: async (args, commandCtx) => {
-        if (commandCtx.mode !== "tui") return;
+        if (!isInteractive(commandCtx)) return;
         const sub = args.trim().toLowerCase();
         if (sub === "exit") {
           if (!state.active) {
@@ -363,7 +365,7 @@ export default function (pi: ExtensionAPI) {
   // input fires before Pi appends the user's prompt. A custom message sent here is
   // persisted immediately before that user message, without changing the system prompt.
   pi.on("input", (event, ctx) => {
-    if (ctx.mode !== "tui" || event.source !== "interactive") return;
+    if (!isInteractive(ctx) || event.source !== "interactive") return;
     if (state.active) {
       pi.sendMessage({
         customType: "plan-mode-instructions",

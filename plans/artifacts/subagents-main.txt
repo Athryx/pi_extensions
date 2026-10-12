@@ -1,0 +1,30 @@
+
+ Message from demo:
+
+ Worker demo
+
+ Parent: main · read-only viewer smoke test
+
+ Progress 1/12: local synthetic work.
+ Progress 2/12: local synthetic work.
+ Progress 3/12: local synthetic work.
+ Progress 4/12: local synthetic work.
+ Progress 5/12: local synthetic work.
+ Progress 6/12: local synthetic work.
+ Progress 7/12: local synthetic work.
+ Progress 8/12: local synthetic work.
+ Progress 9/12: local synthetic work.
+ Progress 10/12: local synthetic work.
+ Progress 11/12: local synthetic work.
+ Progress 12/12: local synthetic work.
+
+ Completed synthetic task.
+
+
+ Main received the worker result.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/pi-subagents-smoke-buij80/project
+6.5%/32k (auto)                                                                                           test

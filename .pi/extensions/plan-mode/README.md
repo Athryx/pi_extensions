@@ -1,6 +1,6 @@
 # Plan mode
 
-TUI-only project extension. Run `/reload` to load it.
+Main-TUI-only project extension. Run `/reload` to load it. The finish_plan tool is marked interactive-only using the shared helper: workers and headless/RPC sessions receive no tool guidance, cannot call it, and do not activate planning controls or inject plan instructions.
 
 ## Commands
 

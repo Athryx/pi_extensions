@@ -1,6 +1,6 @@
 # Goal mode
 
-Project-local Pi extension (load with `/reload`). Tracks one goal per session branch in TUI, RPC, JSON, and print modes. The TUI shows the status in the footer and a short goal widget above the editor.
+Project-local Pi extension (load with `/reload`). Tracks one goal per session branch in the main interactive TUI. Goal tools and usage guidance are marked interactive-only; headless/RPC sessions and workers do not activate goal mode, restore running goals, or schedule goal continuations. The TUI shows the status in the footer and a short goal widget above the editor.
 
 - `/goal <goal>` sets or replaces the goal, marks it running, and immediately asks the agent to work on it.
 - `/goal` shows the current goal in UI modes.

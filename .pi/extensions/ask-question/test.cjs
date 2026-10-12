@@ -28,13 +28,16 @@ async function load() {
   return module.exports.default;
 }
 
-test('headless mode does not register a tool', async () => {
+test('headless mode registers only a hidden tool without usage guidance', async () => {
   const init = await load();
   const tools = [];
   const pi = { on: (_, callback) => { pi.start = callback; }, registerTool: (tool) => tools.push(tool) };
   init(pi);
   pi.start({}, { mode: 'print' });
-  assert.equal(tools.length, 0);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].exposure, 'hidden');
+  assert.equal(tools[0].promptSnippet, undefined);
+  assert.equal(tools[0].promptGuidelines, undefined);
 });
 
 test('multiple questions in one call share one form; notes and answers retain order', async () => {
@@ -53,7 +56,7 @@ test('multiple questions in one call share one form; notes and answers retain or
   assert.match(tool.promptGuidelines.join(' '), /\(Recommended\)/);
   assert.match(tool.promptGuidelines.join(' '), /empty list/);
   let shown = 0;
-  const ctx = { ui: { custom: (factory) => {
+  const ctx = { mode: 'tui', ui: { custom: (factory) => {
     shown++;
     return new Promise((resolve) => {
       ui = factory({ requestRender() {} }, { fg: (_, s) => s, bg: (_, s) => s }, {}, resolve);
@@ -67,15 +70,22 @@ test('multiple questions in one call share one form; notes and answers retain or
   assert.equal(shown, 1);
   ui.render(80);
   ui.handleInput('down');
-  ui.handleInput('enter'); // second choice
+  ui.handleInput('enter'); // second choice advances to second question
+  assert.match(ui.render(80).join('\n'), /Second\?/);
+  ui.handleInput('left'); // revisit first question to add notes
   ui.handleInput('tab'); // open first question's notes inline
   assert.match(ui.render(80).join('\n'), /Notes:/);
   ui.handleInput('extra');
   ui.handleInput('tab'); // save and close notes
   ui.handleInput('right'); // second question
   ui.handleInput('enter'); // free-form editor
+  ui.handleInput('enter'); // empty answer must not advance
+  assert.match(ui.render(80).join('\n'), /Your answer:/);
   ui.handleInput('free text');
-  ui.handleInput('enter'); // save answer
+  ui.handleInput('enter'); // save answer and advance to Submit
+  assert.match(ui.render(80).join('\n'), /Submit answers/);
+  assert.doesNotMatch(ui.render(80).join('\n'), /Your answer:/);
+  ui.handleInput('left');
   ui.handleInput('left'); // revisit first question
   assert.match(ui.render(80).join('\n'), /> 2\. two ✓/);
   ui.handleInput('right'); // revisit second
@@ -100,19 +110,24 @@ test('Other accepts custom text, cancellation resolves every sibling', async () 
   init(pi);
   pi.start({}, { mode: 'tui' });
   let ui;
-  const ctx = { ui: { custom: (factory) => new Promise((done) => {
+  const ctx = { mode: 'tui', ui: { custom: (factory) => new Promise((done) => {
     ui = factory({ requestRender() {} }, { fg: (_, s) => s, bg: (_, s) => s }, {}, done);
   }) } };
   const custom = tool.execute('a', { questions: [{ question: 'Choose', choices: ['a', 'b', 'c'] }] }, undefined, undefined, ctx);
   await new Promise((resolve) => setTimeout(resolve, 10));
   ui.handleInput('down'); ui.handleInput('down'); ui.handleInput('down');
   ui.handleInput('enter'); ui.handleInput('something else'); ui.handleInput('enter');
+  assert.match(ui.render(80).join('\n'), /Submit answers/);
+  ui.handleInput('left');
   assert.match(ui.render(80).join('\n'), /Other \(write your own answer\): something else ✓/);
   ui.handleInput('enter'); // reopen Other with the existing answer
   assert.match(ui.render(80).join('\n'), /Your answer:\n something else/);
   ui.handleInput(' revised'); ui.handleInput('enter');
+  assert.match(ui.render(80).join('\n'), /Submit answers/);
+  ui.handleInput('left');
   assert.match(ui.render(80).join('\n'), /Other \(write your own answer\): something else revised ✓/);
   ui.handleInput('tab'); ui.handleInput('a note'); ui.handleInput('enter');
+  assert.doesNotMatch(ui.render(80).join('\n'), /Submit answers/);
   ui.handleInput('right');
   assert.match(ui.render(80).join('\n'), /something else revised \(notes: a note\)/);
   ui.handleInput('enter');

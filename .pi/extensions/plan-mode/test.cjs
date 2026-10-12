@@ -220,12 +220,23 @@ test('resuming a planning session restores its indicator and exit tool', async (
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test('no commands or tool registered headlessly', async () => {
+test('no commands or tool guidance exposed headlessly', async () => {
   const { default: init } = await load();
   const h = harness(init, '/tmp', 'print');
   assert.deepEqual(Object.keys(h.commands), []);
-  assert.deepEqual(Object.keys(h.tools), []);
+  assert.equal(h.tools.finish_plan.exposure, 'hidden');
+  assert.equal(h.tools.finish_plan.promptGuidelines, undefined);
   assert.equal(h.events.before_agent_start, undefined);
   h.events.input({ source: 'interactive', text: 'hello' }, h.ctx);
+  assert.equal(h.conversation.length, 0);
+});
+
+test('explicit worker sessions do not activate plan mode even when viewed in TUI', async () => {
+  const {default: init} = await load();
+  const h = harness(init, '/tmp', 'tui', [{type:'custom', customType:'subagents.identity.v1', data:{role:'worker'}}]);
+  assert.equal(h.tools.finish_plan.exposure, 'hidden');
+  assert.equal(h.tools.finish_plan.promptGuidelines, undefined);
+  assert.deepEqual(Object.keys(h.commands), []);
+  h.events.input({source:'interactive'}, h.ctx);
   assert.equal(h.conversation.length, 0);
 });

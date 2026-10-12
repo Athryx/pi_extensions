@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { isInteractive, registerInteractiveTool, interactiveSection } from "../shared/interactive";
 
 const STATE_KEY = "project-goal-mode";
 const REMINDER_KEY = "project-goal-reminder";
@@ -36,6 +37,7 @@ export default function (pi: ExtensionAPI) {
 
   function restore(ctx: ExtensionContext) {
     state = emptyState();
+    if (!isInteractive(ctx)) return;
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom" || entry.customType !== STATE_KEY || !entry.data) continue;
       const data = entry.data as GoalState;
@@ -53,6 +55,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function setGoal(ctx: ExtensionContext, goal: string): string {
+    if (!isInteractive(ctx)) throw new Error("Goal mode is only available to the interactive agent");
     const text = goal.trim();
     if (!text) return "A nonempty goal is required.";
     update(ctx, text, "running");
@@ -60,6 +63,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function setStatus(ctx: ExtensionContext, status: GoalStatus, reason: string | undefined, fromAgent: boolean): string {
+    if (!isInteractive(ctx)) throw new Error("Goal mode is only available to the interactive agent");
     if (!state.goal) return "No current goal. Set a goal first.";
     if (status === "running" && state.status !== "blocked") return "Only a blocked goal can be resumed.";
     if (fromAgent && status !== "running" && !reason?.trim()) {
@@ -74,36 +78,39 @@ export default function (pi: ExtensionAPI) {
     pi.sendUserMessage(text, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
   }
 
-  pi.registerTool({
-    name: "set_goal", label: "Set Goal",
-    executionMode: "sequential",
-    description: "Set or replace the current goal and start running it. Call only when the user explicitly requests setting a goal.",
-    promptGuidelines: ["Call set_goal only when the user explicitly asks to set a goal; do not turn ordinary requests into goals."],
-    parameters: Type.Object({ goal: Type.String({ description: "The user's explicit goal" }) }, { additionalProperties: false }),
-    async execute(_id, params, _signal, _update, ctx) {
-      const message = setGoal(ctx, params.goal);
-      return { content: [{ type: "text", text: message }], details: undefined };
-    },
-  });
+  function registerTools(ctx: ExtensionContext) {
+    registerInteractiveTool(pi, {
+      name: "set_goal", label: "Set Goal",
+      executionMode: "sequential",
+      description: "Set or replace the current goal and start running it. Call only when the user explicitly requests setting a goal.",
+      promptGuidelines: ["Call set_goal only when the user explicitly asks to set a goal; do not turn ordinary requests into goals."],
+      parameters: Type.Object({ goal: Type.String({ description: "The user's explicit goal" }) }, { additionalProperties: false }),
+      async execute(_id, params, _signal, _update, ctx) {
+        const message = setGoal(ctx, params.goal);
+        return { content: [{ type: "text", text: message }], details: undefined };
+      },
+    }, ctx);
 
-  pi.registerTool({
-    name: "set_goal_status", label: "Set Goal Status",
-    executionMode: "sequential",
-    description: "Update an existing goal. For completed or blocked, supply a reason explaining strong evidence for that status; never invent evidence. Use running only when the user asks to resume a blocked/interrupted goal. Completed clears the goal.",
-    promptGuidelines: ["Call set_goal_status(completed or blocked) only with strong evidence, included in reason. Call set_goal_status(running) only when the user asks to resume a blocked goal."],
-    parameters: Type.Object({
-      status: StringEnum(["running", "completed", "blocked"] as const),
-      reason: Type.Optional(Type.String({ description: "Explanation including evidence when completed or blocked" })),
-    }, { additionalProperties: false }),
-    async execute(_id, params, _signal, _update, ctx) {
-      const message = setStatus(ctx, params.status, params.reason, true);
-      return { content: [{ type: "text", text: message }], details: undefined };
-    },
-  });
+    registerInteractiveTool(pi, {
+      name: "set_goal_status", label: "Set Goal Status",
+      executionMode: "sequential",
+      description: "Update an existing goal. For completed or blocked, supply a reason explaining strong evidence for that status; never invent evidence. Use running only when the user asks to resume a blocked/interrupted goal. Completed clears the goal.",
+      promptGuidelines: ["Call set_goal_status(completed or blocked) only with strong evidence, included in reason. Call set_goal_status(running) only when the user asks to resume a blocked goal."],
+      parameters: Type.Object({
+        status: StringEnum(["running", "completed", "blocked"] as const),
+        reason: Type.Optional(Type.String({ description: "Explanation including evidence when completed or blocked" })),
+      }, { additionalProperties: false }),
+      async execute(_id, params, _signal, _update, ctx) {
+        const message = setStatus(ctx, params.status, params.reason, true);
+        return { content: [{ type: "text", text: message }], details: undefined };
+      },
+    }, ctx);
+  }
 
   pi.registerCommand("goal", {
     description: "Set a goal or manage it: /goal <goal> | resume | pause | stop",
     handler: async (args, ctx) => {
+      if (!isInteractive(ctx)) return;
       const text = args.trim();
       if (!text) {
         if (ctx.hasUI) ctx.ui.notify(state.goal ? `Goal (${state.status}): ${state.goal}${state.reason ? ` — ${state.reason}` : ""}` : "No goal. Use /goal <goal> to start one.", "info");
@@ -123,11 +130,11 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", (_event, ctx) => restore(ctx));
+  pi.on("session_start", (_event, ctx) => { registerTools(ctx); restore(ctx); });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
 
-  pi.on("before_agent_start", (event) => {
-    event.systemPromptOptions.sections.goal_mode = "Goal mode: Only call set_goal when the user explicitly asks to set a goal. Only call set_goal_status(completed/blocked) when you have strong evidence, and explain that evidence in the reason argument. Call set_goal_status(running) only if the user asks to resume an interrupted blocked goal. Do not declare a running goal finished without updating its status; if it is still running, keep working.";
+  pi.on("before_agent_start", (event, ctx) => {
+    interactiveSection(event.systemPromptOptions.sections, "goal_mode", "Goal mode: Only call set_goal when the user explicitly asks to set a goal. Only call set_goal_status(completed/blocked) when you have strong evidence, and explain that evidence in the reason argument. Call set_goal_status(running) only if the user asks to resume an interrupted blocked goal. Do not declare a running goal finished without updating its status; if it is still running, keep working.", ctx);
   });
 
   // A queued reminder may become stale if a user pauses, stops, or replaces the goal.
@@ -141,6 +148,7 @@ export default function (pi: ExtensionAPI) {
   }));
 
   pi.on("agent_before_settle", (event, ctx) => {
+    if (!isInteractive(ctx)) return;
     if (!state.goal || state.status !== "running" || event.outcome !== "completed" || !event.context.canContinue || event.continue || ctx.hasPendingMessages() || ctx.signal?.aborted) return;
     const last = event.context.contextMessages.at(-1);
     if (last?.role !== "assistant" || last.stopReason !== "stop" || last.content.some((item) => item.type === "toolCall")) return;

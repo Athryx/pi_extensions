@@ -1,0 +1,30 @@
+main · [demo]
+demo · running · parent: main · test · Idle (0) hidden
+
+Workspace initialized for demo. Parent: main. Await your assigned task.
+
+
+Display progress for the read-only viewer
+
+
+Worker demo
+
+Parent: main · read-only viewer smoke test
+
+Progress 1/12: local synthetic work.
+Progress 2/12: local synthetic work.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Tab/←→ agent · ↑↓/PgUp/PgDn scroll · End follow · i idle · o tools · Esc main

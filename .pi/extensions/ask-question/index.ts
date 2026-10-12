@@ -1,6 +1,7 @@
 import { truncateHead, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Editor, type EditorTheme, type Focusable, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { registerInteractiveTool } from "../shared/interactive";
 
 const questionSchema = Type.Object({
   question: Type.String({ description: "Question to show the user" }),
@@ -47,10 +48,19 @@ async function showQuestions(ctx: ExtensionContext, pending: Pending[]): Promise
     const refresh = () => tui.requestRender();
     const current = () => questions[tab];
     const allAnswered = () => questions.every((q) => answers.has(q.id));
+    const moveTab = (direction: number) => {
+      tab = Math.max(0, Math.min(questions.length, tab + direction));
+      const destination = current();
+      if (destination?.choices.length && answers.has(destination.id)) {
+        optionIndexes[tab] = (answers.get(destination.id)?.choiceIndex ?? destination.choices.length + 1) - 1;
+      }
+    };
     const finishAnswer = (answer: Answer) => {
       const q = current();
       if (!q) return;
       answers.set(q.id, { ...answer, notes: notes.get(q.id) ?? "" });
+      editing = null;
+      moveTab(1);
       refresh();
     };
     editor.onSubmit = (value) => {
@@ -84,11 +94,7 @@ async function showQuestions(ctx: ExtensionContext, pending: Pending[]): Promise
         editing = "notes"; editor.setText(notes.get(q.id) ?? ""); refresh(); return;
       }
       if (matchesKey(data, Key.right) || matchesKey(data, Key.left) || matchesKey(data, Key.shift("tab"))) {
-        tab = Math.max(0, Math.min(questions.length, tab + (matchesKey(data, Key.right) ? 1 : -1)));
-        const destination = current();
-        if (destination?.choices.length && answers.has(destination.id)) {
-          optionIndexes[tab] = (answers.get(destination.id)?.choiceIndex ?? destination.choices.length + 1) - 1;
-        }
+        moveTab(matchesKey(data, Key.right) ? 1 : -1);
         refresh(); return;
       }
       if (matchesKey(data, Key.enter)) {
@@ -155,7 +161,7 @@ async function showQuestions(ctx: ExtensionContext, pending: Pending[]): Promise
         }
       }
       lines.push("");
-      add(" ", theme.fg("dim", editing ? (editing === "notes" ? "Tab/Enter save notes • Shift+Enter newline • Esc back" : "Enter save • Shift+Enter newline • Esc back") : "Tab notes • ←→ questions/submit • ↑↓ choices • Enter select • Esc cancel"));
+      add(" ", theme.fg("dim", editing ? (editing === "notes" ? "Tab/Enter save notes • Shift+Enter newline • Esc back" : "Enter save & next • Shift+Enter newline • Esc back") : "Tab notes • ←→ questions/submit • ↑↓ choices • Enter select & next • Esc cancel"));
       lines.push(theme.fg("accent", "─".repeat(w)));
       return lines;
     }
@@ -170,12 +176,11 @@ async function showQuestions(ctx: ExtensionContext, pending: Pending[]): Promise
 }
 
 export default function (pi: ExtensionAPI) {
-  // Register only in the interactive TUI: neither the tool nor its prompt metadata appears headlessly.
+  // Register hidden headlessly: neither the tool nor its usage guidance is exposed.
   pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode !== "tui") return;
     let batch: Pending[] = [];
     let scheduled = false;
-    pi.registerTool<typeof schema, BatchDetails>({
+    registerInteractiveTool<typeof schema, BatchDetails>(pi, {
       name: "ask_question",
       label: "Ask Question",
       exposure: "model-only",
@@ -228,6 +233,6 @@ export default function (pi: ExtensionAPI) {
             : theme.fg("warning", `${question}: Cancelled`),
         ).join("\n") : theme.fg("warning", "Cancelled"), 0, 0);
       },
-    });
+    }, ctx);
   });
 }
