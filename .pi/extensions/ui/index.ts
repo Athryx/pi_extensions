@@ -1,6 +1,9 @@
 import type { ExtensionAPI, ExtensionContext, KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, isKeyRepeat, type Component, type EditorComponent, type TUI } from "@earendil-works/pi-tui";
 import { CompactView } from "./compact.js";
+import { ViewedSessionController } from "./viewed-session";
+import { VIEWED_SESSION_REQUEST, VIEWED_SESSION_CHANGED } from "../shared/viewed-session";
+import type { ViewedSessionAPI, ViewedSessionInfo, ViewedSessionRequest } from "../shared/viewed-session";
 
 const VIEW_ENTRY = "ui-view";
 const WIDGET = "ui-adapter";
@@ -35,7 +38,21 @@ export function matchesToolCycle(tui: FocusTUI, data: string): boolean {
 
 export default function ui(pi: ExtensionAPI) {
   let view: CompactView | undefined;
+  let transcript: ViewedSessionController | undefined;
+  let cleaning = false;
   let unsubscribe: (() => void) | undefined;
+  const viewListeners = new Set<(view: ViewedSessionInfo | undefined) => void>();
+  const api: ViewedSessionAPI = {
+    version: 1,
+    get available() { return transcript?.available ?? false; },
+    setViewedSession: source => transcript?.setViewedSession(source) ?? false,
+    getViewedSession: () => transcript?.info,
+    onChange: listener => { viewListeners.add(listener); return () => { viewListeners.delete(listener); }; },
+  };
+  pi.events.on(VIEWED_SESSION_REQUEST, data => {
+    const request = data as Partial<ViewedSessionRequest> | undefined;
+    if (typeof request?.reply === "function") request.reply(api);
+  });
   let compact = true;
   let currentMode: ViewMode = "compact";
   const nestedCalls: CompactView["nestedCalls"] = new Map();
@@ -48,10 +65,11 @@ export default function ui(pi: ExtensionAPI) {
   });
 
   const cleanup = () => {
-    unsubscribe?.();
-    unsubscribe = undefined;
-    view?.dispose();
-    view = undefined;
+    cleaning = true;
+    unsubscribe?.(); unsubscribe = undefined;
+    transcript?.dispose(); transcript = undefined;
+    view?.dispose(); view = undefined;
+    cleaning = false;
   };
   const setView = (mode: ViewMode, ctx: ExtensionContext) => {
     if (ctx.mode !== "tui") return;
@@ -60,6 +78,8 @@ export default function ui(pi: ExtensionAPI) {
     // The native expansion flag is irrelevant while compact; keeping it intact
     // also avoids a misleading "collapsed" notice when entering compact mode.
     if (!compact) ctx.ui.setToolsExpanded(mode === "expanded");
+    transcript?.setExpanded(ctx.ui.getToolsExpanded());
+    transcript?.setToolMode(mode);
     if (view) {
       view.enabled = compact;
       view.showCode = mode === "compact-code";
@@ -104,13 +124,30 @@ export default function ui(pi: ExtensionAPI) {
     // A zero-height widget supplies the live TUI without replacing the user's
     // editor, header, footer, or other extensions' widgets.
     ctx.ui.setWidget(WIDGET, tui => {
-      view = new CompactView(tui, () => ctx.ui.theme, compact);
-      view.showCode = mode === "compact-code";
-      view.nestedCalls = nestedCalls;
+      const attachCompact = () => {
+        // Release wrappers on the retired transcript, including hidden main
+        // rows. Reattach only the visible tree, so switching cannot leak rows.
+        view?.dispose();
+        view = new CompactView(tui, () => ctx.ui.theme, compact);
+        view.showCode = currentMode === "compact-code";
+        view.nestedCalls = transcript?.nestedCalls ?? nestedCalls;
+      };
+      transcript = new ViewedSessionController(tui, ctx, info => {
+        if (!cleaning) attachCompact();
+        pi.events.emit(VIEWED_SESSION_CHANGED, info);
+        for (const listener of viewListeners) {
+          try { listener(info); } catch (error) { console.error("Viewed-session listener failed:", error); }
+        }
+      });
+      transcript.setExpanded(ctx.ui.getToolsExpanded());
+      transcript.setToolMode(currentMode);
+      attachCompact();
       unsubscribe = ctx.ui.onTerminalInput(data => {
         // Raw listeners run BEFORE Pi filters Kitty key-up reports. Never turn
         // a release into a second clear/cycle action; leave it to native input.
         if (isKeyRelease(data)) return undefined;
+        const handled = transcript?.handleInput(data);
+        if (handled) return handled;
         if (matchesToolCycle(tui, data)) {
           if (!isKeyRepeat(data)) cycle(ctx);
           // Consume repeats too: allowing them through would invoke Pi's native
@@ -140,5 +177,6 @@ export default function ui(pi: ExtensionAPI) {
       else ctx.ui.notify("Usage: /ui [compact|compact-code|collapsed|expanded|normal|toggle|cycle]", "warning");
     },
   });
+  pi.on("session_tree", () => { transcript?.setViewedSession(undefined); });
   pi.on("session_shutdown", cleanup);
 }

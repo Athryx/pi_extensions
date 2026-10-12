@@ -14,10 +14,10 @@ Pi supplies the peer packages; `--legacy-peer-deps` prevents npm from installing
 
 Commands:
 
-- `/agent [template]`: change the existing main conversation's template, or choose one. Main must be idle. History, instance name, role, and existing children remain intact.
-- `/agents`: full-screen **read-only** live transcript viewer. It does not switch the actual Pi session or grant interactive control to workers. In print mode this lists workspace members; RPC uses a notification and JSON uses a custom message.
+- `/agent [template]`: select the main conversation's template by name, or open Pi's native picker. Main must be idle and the session must not yet contain an actual user message. You can freely change templates before the first prompt; `/agent` commands, system messages, extension state, and custom context messages do not count. After the first user message, the template is locked: UI modes warn without opening a picker; modes without UI report an error. Use `/new` for an empty conversation where you can choose again. The command preserves the instance name, role, and existing children.
+- `/agents [name]`: with the UI extension's viewed-session API, choose any workspace agent (including idle workers) using Pi's native selector, or view a named agent directly. `/agents main` restores the main transcript. Worker views are **read-only**, remain live when workers become idle or resume, and use the UI's normal transcript rendering/scrolling. Selection never switches the actual Pi session or grants interactive control to workers; root navigation, reload and shutdown clear it. In print mode this lists workspace members; RPC uses a notification and JSON uses a custom message, regardless of arguments.
 
-Viewer keys: Tab/Shift+Tab or left/right cycle agents; up/down, PageUp/PageDown and Home/End scroll; End follows streaming output; `i` includes idle/error/interrupted agents; `o` expands tool output; Escape or `q` returns to main. Mouse wheel scrolls the selected transcript. Selected workers remain visible when they become idle. Images from tool results honor the session's Pi settings; user image attachments currently show their accompanying text only.
+Without a compatible viewed-session UI API, `/agents` retains the full-screen read-only overlay. Overlay keys: Tab/Shift+Tab or left/right cycle agents; up/down, PageUp/PageDown and Home/End scroll; End follows streaming output; `i` includes idle/error/interrupted agents; `o` expands tool output; Escape or `q` returns to main. Mouse wheel scrolls the selected transcript. Selected workers remain visible when they become idle. Images from tool results honor the session's Pi settings; user image attachments currently show their accompanying text only.
 
 ## YAML definitions
 
@@ -115,6 +115,10 @@ Each worker uses a separate Pi JSONL file under the main configured session dire
 
 Restart/reload reconstructs workers as idle, with no automatic token spending on interrupted tasks. Explicit messages resume them and reconcile pending deliveries. Missing/corrupt/mismatched worker files produce errors instead of silently starting new histories. Crash recovery is at-least-once: a crash between message persistence and acknowledgment can cause redelivery; IDs reconcile messages already persisted in context.
 
+Main's template is fixed when its first actual user message is emitted. A durable non-context custom entry, `subagents.main-template-lock.v1`, records `{version: 1, template: "<selected name>"}`. The lock is session-wide, not branch-relative: reload/resume, compaction, and tree navigation scan **all** entries for this marker and old user history. Backtracking before the first prompt cannot unlock the session or restore an earlier template selection; the locked template wins over branch-local choices. Existing sessions with user history but no marker are migrated by locking their current chosen template at startup. A pending `/agent` picker rechecks the lock, current workspace, and idle state before applying its result.
+
+A genuinely empty `/new` session unlocks template selection. Forks carrying user history or a lock marker inherit the lock, including a marker-only fork made before the user message was persisted. `/agents` remains a read-only viewer and is unaffected by template locking.
+
 Main session forks get new workspace identities and do not reuse original workers. Tree navigation uses branch-relative membership and stops old runs before reconstruction. Ephemeral roots use in-memory workers; tree navigation retains their histories within the process. No ephemeral history survives process exit.
 
 Workers inherit cwd/trust and normal configured extensions except this root extension and known main-only context/UI/usage extensions. Question, plan, and goal extensions now load normally and use the shared interactive-only helpers: their tools are hidden, tool snippets/guidelines are omitted, and workflow guidance/continuations are suppressed outside the main TUI. Interactive tools cannot be re-enabled by template extras or called through nested tools. These helpers also protect a worker file opened separately in a TUI. See [shared/README.md](../shared/README.md) for marking other extension tools and prompt sections; Pi itself has no native interactive-only metadata field.
@@ -130,6 +134,7 @@ npm --prefix .pi/extensions/subagents test
 npm --prefix .pi/extensions/subagents run check
 node --test .pi/extensions/*/test.cjs .pi/extensions/*/ui.test.cjs \
   .pi/extensions/subagents/runtime.test.cjs .pi/extensions/subagents/root.test.cjs \
+  .pi/extensions/subagents/selection.test.cjs .pi/extensions/subagents/main-template-lock.test.cjs \
   tests/pi-compatibility.cjs
 ```
 

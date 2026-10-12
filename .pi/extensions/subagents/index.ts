@@ -6,22 +6,40 @@ import type { AgentSessionEvent, ExtensionAPI, ExtensionContext } from "@earendi
 import { IDENTITY_KEY, isWorkerSession } from "../shared/agent-role";
 import { loadConfig } from "./config";
 import { discoverTemplates } from "./templates";
-import { customData, TEMPLATE_KEY, DELIVERY_KEY } from "./persistence";
+import { customData, TEMPLATE_KEY, DELIVERY_KEY, MAIN_TEMPLATE_LOCK_KEY, mainTemplateLock, hasUserMessage } from "./persistence";
 import { promptIdentity, checkTools, loadout, selection, COMMS, PI_DEFAULT_TOOLS } from "./loadout";
 import { registerTools } from "./tools";
 import { message, MESSAGE_KEY } from "./messages";
 import { Workspace } from "./workspace";
 import { AgentsView } from "./view";
+import { AgentViewSelection } from "./selection";
 import type { Identity, Selection } from "./types";
 export default function subagents(pi: ExtensionAPI) {
   const defaultsDir = resolve(dirname(fileURLToPath(import.meta.url)), "defaults");
   let workspace: Workspace | undefined;
   let originalTools: string[] | undefined;
   let selecting = false;
+  let lockedTemplate: string | undefined;
+  const viewedAgent = new AgentViewSelection(pi);
   const get = () => { if (!workspace || workspace.closed) throw new Error("No interactive workspace is active"); return workspace; };
   const persistTemplate = () => {
     const current = get(); pi.appendEntry(TEMPLATE_KEY, {template: current.get("main").template.name, global: current.global ? {provider: current.global.model.provider, id: current.global.model.id, thinking: current.global.thinking} : undefined});
   };
+  function lockTemplate(ctx: ExtensionContext, userMessageStarted = false): void {
+    lockedTemplate ??= mainTemplateLock(ctx.sessionManager);
+    if (!lockedTemplate && (userMessageStarted || hasUserMessage(ctx.sessionManager))) {
+      lockedTemplate = get().get("main").template.name;
+      pi.appendEntry(MAIN_TEMPLATE_LOCK_KEY, {version: 1, template: lockedTemplate});
+    }
+  }
+  function rejectLockedTemplate(ctx: ExtensionContext): boolean {
+    lockTemplate(ctx);
+    if (!lockedTemplate) return false;
+    const text = `Main agent template is locked to ${lockedTemplate} after the first user message. Use /new to choose another agent in a new session.`;
+    if (!ctx.hasUI) throw new Error(text);
+    ctx.ui.notify(text, "warning");
+    return true;
+  }
   function applyTools() {
     const current = get(), root = current.get("main");
     registerTools(pi, get, "main", !!root.template.subagents.allowed.length);
@@ -33,8 +51,11 @@ export default function subagents(pi: ExtensionAPI) {
   }
   async function start(ctx: ExtensionContext, reason?: string) {
     const ephemeralSessions = ["tree", "reload"].includes(reason ?? "") ? workspace?.ephemeralSessions : undefined;
+    viewedAgent.clear();
     await workspace?.close(); workspace = undefined;
+    lockedTemplate = undefined;
     if (isWorkerSession(ctx.sessionManager)) return;
+    lockedTemplate = mainTemplateLock(ctx.sessionManager);
     const agentDir = getAgentDir(), trusted = ctx.isProjectTrusted();
     const user = await loadConfig(agentDir, ctx.cwd, false), config = await loadConfig(agentDir, ctx.cwd, trusted);
     const {templates, diagnostics} = await discoverTemplates([
@@ -50,6 +71,7 @@ export default function subagents(pi: ExtensionAPI) {
     }
     const saved = customData<{template: string; global?: {provider: string; id: string; thinking: Selection["thinking"]}}>(ctx.sessionManager, TEMPLATE_KEY).at(-1);
     if (saved?.template && templates.has(saved.template)) identity = {...identity, template: saved.template};
+    if (lockedTemplate) identity = {...identity, template: lockedTemplate};
     if (!templates.has(identity.template)) throw new Error("Selected template is unavailable: " + identity.template);
     let global: Selection | undefined = ctx.model ? {model: ctx.model, thinking: ctx.thinkingLevel ?? "medium"} : undefined;
     if (saved?.global) { const model = ctx.modelRegistry.find(saved.global.provider, saved.global.id); if (model) global = {model, thinking: saved.global.thinking}; }
@@ -61,12 +83,14 @@ export default function subagents(pi: ExtensionAPI) {
     workspace.get("main").settings = SettingsManager.create(ctx.cwd, agentDir, {projectTrusted: trusted});
     await workspace.get("main").settings!.reload();
     await workspace.restore();
+    // Migrate existing conversations that predate the durable lock marker.
+    lockTemplate(ctx);
     originalTools ??= pi.getActiveTools().filter(n => ![...COMMS, "create_agent"].includes(n));
     applyTools();
   }
   pi.on("session_start", (event, ctx) => start(ctx, event.reason));
   pi.on("session_tree", (_event, ctx) => start(ctx, "tree"));
-  pi.on("session_shutdown", async () => { await workspace?.close(); workspace = undefined; });
+  pi.on("session_shutdown", async () => { viewedAgent.clear(); await workspace?.close(); workspace = undefined; lockedTemplate = undefined; });
   pi.on("before_agent_start", (event, ctx) => {
     if (!workspace || isWorkerSession(ctx.sessionManager)) return;
     const root = workspace.get("main");
@@ -86,6 +110,7 @@ export default function subagents(pi: ExtensionAPI) {
   const observeRoot = (event: AgentSessionEvent, ctx: ExtensionContext) => {
       if (!workspace) return;
       const root = workspace.get("main");
+      if (event.type === "message_start" && event.message.role === "user") lockTemplate(ctx, true);
       root.messages = ctx.sessionManager.buildSessionProjection().messages;
       if ((event.type === "message_update" || event.type === "message_end") && "message" in event && !root.messages.some(m => m.role === event.message.role && m.timestamp === event.message.timestamp)) root.messages = [...root.messages, event.message];
       if (event.type === "message_end" && "message" in event && event.message.role === "custom" && event.message.customType === MESSAGE_KEY) pi.appendEntry(DELIVERY_KEY, {envelope: event.message.details, delivered: true});
@@ -111,19 +136,24 @@ export default function subagents(pi: ExtensionAPI) {
     persistTemplate();
   });
   pi.registerCommand("agent", {
-    description: "Select the template for the main interactive agent",
-    getArgumentCompletions: prefix => workspace ? [...workspace.templates.keys()].filter(n => n.startsWith(prefix)).map(n => ({value: n, label: n})) : null,
+    description: "Select main's template before the first user message locks it",
+    getArgumentCompletions: prefix => workspace ? lockedTemplate ? [] : [...workspace.templates.keys()].filter(n => n.startsWith(prefix)).map(n => ({value: n, label: n})) : null,
     handler: async (args, ctx) => {
       const current = get();
+      if (rejectLockedTemplate(ctx)) return;
       if (!ctx.isIdle()) { ctx.ui.notify("Wait until main is idle before changing its template.", "warning"); return; }
       const name = args.trim() || (ctx.hasUI ? await ctx.ui.select("Main agent template", [...current.templates.keys()]) : undefined);
-      if (!name) return;
+      if (!name || current !== workspace || current.closed) return;
+      // A prompt can arrive while the picker is open; never apply its stale choice.
+      if (rejectLockedTemplate(ctx)) return;
+      if (!ctx.isIdle()) { ctx.ui.notify("Wait until main is idle before changing its template.", "warning"); return; }
       const template = current.template(name), root = current.get("main");
       const resolved = selection(template, undefined, current.global, ctx);
       checkTools(pi, loadout(template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS).filter(n => n !== "create_agent"));
       selecting = true;
       try {
         if (!await pi.setModel(resolved.model)) throw new Error("Model credentials unavailable");
+        if (current !== workspace || current.closed || rejectLockedTemplate(ctx)) return;
         pi.setThinkingLevel(resolved.thinking);
         root.template = template; root.identity.template = template.name;
         root.selection = {model: resolved.model, thinking: pi.getThinkingLevel()};
@@ -132,8 +162,9 @@ export default function subagents(pi: ExtensionAPI) {
     },
   });
   pi.registerCommand("agents", {
-    description: "Read-only live workspace transcripts; cycle agents and inspect idle workers",
-    handler: async (_args, ctx) => {
+    description: "View a read-only agent transcript; /agents main restores main",
+    getArgumentCompletions: prefix => workspace ? [...workspace.records.keys()].filter(n => n.startsWith(prefix)).map(n => ({value: n, label: n})) : null,
+    handler: async (args, ctx) => {
       const current = get();
       if (ctx.mode !== "tui") {
         const content = JSON.stringify(current.list("main", true), null, 2);
@@ -142,6 +173,7 @@ export default function subagents(pi: ExtensionAPI) {
         else pi.sendMessage({customType: "subagents.list.v1", content, display: true}, {triggerTurn: false});
         return;
       }
+      if (await viewedAgent.select(current, args, ctx)) return;
       let view: AgentsView | undefined;
       try { await ctx.ui.custom<void>((tui, theme, _keys, done) => { view = new AgentsView(current, tui, theme, done); return view; }, {overlay: true, overlayOptions: {width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0}}); }
       finally { view?.dispose(); }

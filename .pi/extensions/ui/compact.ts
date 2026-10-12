@@ -3,10 +3,13 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
 import { highlightCompactCode } from "./syntax-highlight.js";
 import { emphasize } from "./emphasis.js";
+import { customToolSummary, isQuestionTool, renderCustomTool, renderAgentMessage } from "./custom-tools";
+import type { AgentMessageInput } from "./custom-tools";
 
 // Pi exposes renderers, but no transcript-layout hook. Keep the only internal
-// dependency here: the runtime fields on ToolExecutionComponent. Never replace
-// tool definitions, prototypes, transcript entries, or another tool's renderer.
+// dependency here: runtime fields on ToolExecutionComponent and known workspace
+// CustomMessageComponent instances. Never replace tool definitions, prototypes,
+// transcript entries, or another tool's renderer.
 interface ToolRow extends Component {
   toolName: string;
   toolCallId: string;
@@ -21,6 +24,10 @@ interface ToolRow extends Component {
 interface Branch extends Component {
   children: Component[];
 }
+interface AgentMessageRow extends Component {
+  message: AgentMessageInput;
+  outputPad?: number;
+}
 interface GroupPosition {
   grouped: boolean;
   first: boolean;
@@ -31,6 +38,9 @@ function isToolRow(component: Component): component is ToolRow {
   return typeof row.toolName === "string" && typeof row.toolCallId === "string"
     && "args" in row && typeof row.setExpanded === "function"
     && typeof row.executionStarted === "boolean" && typeof row.isPartial === "boolean";
+}
+function isAgentMessage(component: Component): component is AgentMessageRow {
+  return (component as Partial<AgentMessageRow>).message?.customType === "subagents.message.v1";
 }
 function isBranch(component: Component): component is Branch {
   return Array.isArray((component as Partial<Branch>).children);
@@ -125,6 +135,8 @@ export function toolSummary(name: string, input: unknown, cwd?: string, result?:
   if (label === "grep" || label === "find") {
     return `${oneLine(args.pattern) || "…"} in ${shortPath(args.path ?? ".", cwd)}`;
   }
+  const custom = customToolSummary(name, input, result);
+  if (custom !== undefined) return custom;
   // Prefer descriptive arguments, never entire write/edit payloads or stdin.
   for (const key of ["path", "file_path", "command", "question", "title", "query", "url", "goal", "session_name", "status", "name", "reason"]) {
     if (args[key] !== undefined && args[key] !== null) {
@@ -154,7 +166,7 @@ export class CompactView {
 
   private attach(component: Component): void {
     if (this.disposed || this.originals.has(component)) return;
-    if (!isToolRow(component) && !isBranch(component)) return;
+    if (!isToolRow(component) && !isAgentMessage(component) && !isBranch(component)) return;
     const original = {
       render: component.render, mouse: component.handleMouse,
       ownRender: Object.hasOwn(component, "render"), ownMouse: Object.hasOwn(component, "handleMouse"),
@@ -164,6 +176,16 @@ export class CompactView {
       component.render = width => this.enabled ? this.renderRow(component, width) : original.render.call(component, width);
       // Let compact text participate in terminal selection, not the native box's
       // stale mouse geometry. Ctrl+O still controls expansion in the normal view.
+      component.handleMouse = event => this.enabled ? undefined : original.mouse?.call(component, event);
+      return;
+    }
+    if (isAgentMessage(component)) {
+      component.render = width => {
+        if (!this.enabled) return original.render.call(component, width);
+        if (width <= 0) return [];
+        const lines = renderAgentMessage(component.message, this.getTheme(), width, component.outputPad);
+        return lines ? ["", ...lines] : original.render.call(component, width);
+      };
       component.handleMouse = event => this.enabled ? undefined : original.mouse?.call(component, event);
       return;
     }
@@ -179,23 +201,25 @@ export class CompactView {
 
   private groupRows(children: Component[], width: number): void {
     let run: ToolRow[] = [];
+    let kind: string | undefined;
     const finish = () => {
       run.forEach((row, index) => this.positions.set(row, { grouped: run.length > 1, first: index === 0 }));
-      run = [];
+      run = []; kind = undefined;
     };
     for (const child of children) {
       if (isToolRow(child)) {
-        if (!isFileTool(child.toolName)) {
+        const nextKind = isFileTool(child.toolName) ? child.toolName : isQuestionTool(child.toolName) ? "questions" : undefined;
+        if (!nextKind) {
           finish();
           this.positions.set(child, { grouped: false, first: true });
         } else {
-          if (run.length && run[0].toolName !== child.toolName) finish();
-          run.push(child);
+          if (run.length && kind !== nextKind) finish();
+          kind = nextKind; run.push(child);
         }
       } else {
         // Tool-only assistant messages render nothing. Do not split a run at
         // those, but never group across visible prose, thinking, or user input.
-        if (run.length && child.render(width).length > 0) finish();
+        if (run.length && (isAgentMessage(child) || child.render(width).length > 0)) finish();
       }
     }
     finish();
@@ -206,6 +230,10 @@ export class CompactView {
     const theme = this.getTheme();
     const position = this.positions.get(row) ?? { grouped: false, first: true };
     const label = toolLabel(row.toolName);
+    const custom = renderCustomTool({name: row.toolName, args: row.args, result: row.result,
+      isPartial: row.isPartial, executionStarted: row.executionStarted, outputPad: row.outputPad}, theme, width,
+      {heading: !position.grouped || position.first});
+    if (custom !== undefined) return [...(position.first ? [""] : []), ...custom];
     const title = theme.fg("mdLink", theme.bold(label === "bash" || label === "powershell" ? "$" : oneLine(label)));
     let summary = isFileTool(row.toolName)
       ? styleFileSummary(row.toolName, row.args, row.cwd, row.result, theme)
@@ -273,7 +301,7 @@ export class CompactView {
       children.forEach(child => {
         const rendered = this.renderRow(child, Math.max(1, width - visibleWidth(indent)));
         // Nested headings already have the parent as their visual separator.
-        for (const line of rendered.filter(line => line !== "")) lines.push(fit(indent + line));
+        for (const line of rendered.slice(rendered[0] === "" ? 1 : 0)) lines.push(fit(indent + line));
       });
     }
     return lines;

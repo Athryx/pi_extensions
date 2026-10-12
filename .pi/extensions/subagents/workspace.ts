@@ -180,7 +180,10 @@ export class Workspace {
   observe(record: AgentRecord, event: AgentSessionEvent): void {
     if (this.closed) return;
     if (event.type.startsWith("tool_execution_") && "toolCallId" in event) {
-      record.toolUpdates ??= new Map(); record.toolUpdates.set(event.toolCallId, event);
+      record.toolUpdates ??= new Map();
+      // Preserve start/update arguments when the final event omits them, so a
+      // newly opened transcript can hydrate nested calls without preview loss.
+      record.toolUpdates.set(event.toolCallId, {...record.toolUpdates.get(event.toolCallId), ...event});
     }
     if (event.type === "message_update") {
       record.messages = [...record.session!.messages.filter(m => m !== event.message), event.message];

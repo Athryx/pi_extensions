@@ -112,7 +112,10 @@ test('visible messages break groups; widths, images and unknown tool summaries s
   const lines = plain(chat.render(100));
   assert.equal(lines.filter(line => line === ' read').length, 0);
   assert.ok(lines.includes(' read image.png:1'));
-  assert.ok(lines.includes(' ask_question Pick a choice ↵ please'));
+  assert.ok(lines.includes(' ask_question'));
+  assert.ok(lines.includes('   question: Pick a choice'));
+  assert.ok(lines.some(line => line.trim() === 'please'));
+  assert.ok(lines.some(line => line.includes('answer:')));
   assert.ok(!lines.includes('IMAGE'));
   for (const width of [0, 1, 2, 5, 12, 40]) {
     chat.render(width);
