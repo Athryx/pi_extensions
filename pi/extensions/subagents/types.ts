@@ -11,7 +11,7 @@ export interface Template {
   subagents: { include_defaults: boolean; extra: string[]; allowed: string[]; default?: string };
   source: string;
 }
-export interface Config { agent_paths: string[]; max_running: number; max_depth: number; worker_exclude_extensions: string[] }
+export interface Config { default_agent?: string; agent_paths: string[]; max_running: number; max_depth: number; worker_exclude_extensions: string[] }
 export type ToolSnapshot = Extract<AgentSessionEvent, {type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end"}>;
 export type Status = "starting" | "running" | "waiting" | "idle" | "error" | "interrupted";
 export interface Identity {

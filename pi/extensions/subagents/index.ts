@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { getAgentDir, loadSkills, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { IDENTITY_KEY, isWorkerSession } from "../shared/agent-role";
 import { loadConfig } from "./config";
 import { discoverTemplates } from "./templates";
 import { customData, TEMPLATE_KEY, DELIVERY_KEY, MAIN_TEMPLATE_LOCK_KEY, mainTemplateLock, hasUserMessage } from "./persistence";
-import { promptIdentity, checkTools, loadout, selection, COMMS, PI_DEFAULT_TOOLS } from "./loadout";
+import { promptIdentity, checkTools, loadout, selection, PI_DEFAULT_TOOLS } from "./loadout";
 import { registerTools } from "./tools";
 import { message, MESSAGE_KEY } from "./messages";
 import { Workspace } from "./workspace";
@@ -16,9 +15,7 @@ import { AgentViewSelection } from "./selection";
 import { AgentBar } from "./agent-bar";
 import type { Identity, Selection } from "./types";
 export default function subagents(pi: ExtensionAPI) {
-  const defaultsDir = resolve(dirname(fileURLToPath(import.meta.url)), "defaults");
   let workspace: Workspace | undefined;
-  let originalTools: string[] | undefined;
   let selecting = false;
   let lockedTemplate: string | undefined;
   const viewedAgent = new AgentViewSelection(pi);
@@ -52,9 +49,10 @@ export default function subagents(pi: ExtensionAPI) {
     const current = get(), root = current.get("main");
     registerTools(pi, get, "main", !!root.template.subagents.allowed.length);
     const mainOnly = ["finish_plan", "set_goal", "set_goal_status", "ask_question"].filter(n => pi.getAllTools().some(t => t.name === n));
-    const names = root.template.source === resolve(defaultsDir, "main.yaml")
-      ? [...(originalTools ?? []), ...COMMS, ...(root.template.subagents.allowed.length ? ["create_agent"] : [])]
-      : [...loadout(root.template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS), ...mainOnly];
+    const names = [...loadout(root.template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS, "main"), ...mainOnly];
+    if (root.template.tools.include_defaults && names.includes("bash")) {
+      for (const name of ["interact_bash", "close_bash"]) if (pi.getAllTools().some(t => t.name === name)) names.push(name);
+    }
     checkTools(pi, names); pi.setActiveTools([...new Set(names)]);
   }
   async function start(ctx: ExtensionContext, reason?: string) {
@@ -67,14 +65,16 @@ export default function subagents(pi: ExtensionAPI) {
     const agentDir = getAgentDir(), trusted = ctx.isProjectTrusted();
     const user = await loadConfig(agentDir, ctx.cwd, false), config = await loadConfig(agentDir, ctx.cwd, trusted);
     const {templates, diagnostics} = await discoverTemplates([
-      defaultsDir, resolve(agentDir, "agents"), ...user.agent_paths,
+      resolve(agentDir, "agents"), ...user.agent_paths,
       ...(trusted ? [resolve(ctx.cwd, ".pi/agents"), ...config.agent_paths.slice(user.agent_paths.length)] : []),
     ]);
     for (const diagnostic of diagnostics) if (ctx.hasUI) ctx.ui.notify(diagnostic, "warning");
     let identity = customData<Identity>(ctx.sessionManager, IDENTITY_KEY).at(-1);
     const file = ctx.sessionManager.getSessionFile();
     if (!identity || reason === "fork" || identity.rootSessionFile !== file) {
-      identity = {version: 1, workspaceId: randomUUID(), instanceId: randomUUID(), name: "main", template: "main", role: "interactive", parentName: null, rootSessionFile: file};
+      const template = config.default_agent ?? [...templates.values()].find(t => t.selectable)?.name;
+      if (!template) throw new Error("No selectable agent templates found; configure default_agent in subagents.json");
+      identity = {version: 1, workspaceId: randomUUID(), instanceId: randomUUID(), name: "main", template, role: "interactive", parentName: null, rootSessionFile: file};
       pi.appendEntry(IDENTITY_KEY, identity);
     }
     const saved = customData<{template: string; global?: {provider: string; id: string; thinking: Selection["thinking"]}}>(ctx.sessionManager, TEMPLATE_KEY).at(-1);
@@ -93,8 +93,17 @@ export default function subagents(pi: ExtensionAPI) {
     await workspace.restore();
     // Migrate existing conversations that predate the durable lock marker.
     lockTemplate(ctx);
-    originalTools ??= pi.getActiveTools().filter(n => ![...COMMS, "create_agent"].includes(n));
     applyTools();
+    if (ctx.model) {
+      const root = workspace.get("main");
+      const resolved = selection(root.template, undefined, global, ctx);
+      selecting = true;
+      try {
+        if (!await pi.setModel(resolved.model)) throw new Error("Model credentials unavailable");
+        pi.setThinkingLevel(resolved.thinking);
+        root.selection = {model: resolved.model, thinking: pi.getThinkingLevel()};
+      } finally { selecting = false; }
+    }
     if (ctx.mode === "tui") {
       const current = workspace;
       barContext = ctx;
@@ -176,7 +185,7 @@ export default function subagents(pi: ExtensionAPI) {
       if (!ctx.isIdle()) { ctx.ui.notify("Wait until main is idle before changing its template.", "warning"); return; }
       const template = current.template(name), root = current.get("main");
       const resolved = selection(template, undefined, current.global, ctx);
-      checkTools(pi, loadout(template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS).filter(n => n !== "create_agent"));
+      checkTools(pi, loadout(template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS, "main").filter(n => n !== "create_agent"));
       selecting = true;
       try {
         if (!await pi.setModel(resolved.model)) throw new Error("Model credentials unavailable");

@@ -19,7 +19,11 @@ export async function loadConfig(agentDir: string, cwd: string, trusted: boolean
   for (const file of [resolve(agentDir, "subagents.json"), ...(trusted ? [resolve(cwd, ".pi/subagents.json")] : [])]) {
     let text: string;
     try { text = await readFile(file, "utf8"); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; throw e; }
-    const data = object(JSON.parse(text), Object.keys(result), file);
+    const data = object(JSON.parse(text), [...Object.keys(result), "default_agent"], file);
+    if (data.default_agent !== undefined) {
+      if (typeof data.default_agent !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(data.default_agent)) throw new Error("default_agent must be a valid template name");
+      result.default_agent = data.default_agent;
+    }
     for (const key of ["agent_paths", "worker_exclude_extensions"] as const) {
       if (data[key] !== undefined) result[key].push(...strings(data[key], key).map(p => pathFrom(dirname(file), p)));
     }

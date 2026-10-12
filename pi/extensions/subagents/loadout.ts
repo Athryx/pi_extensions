@@ -3,8 +3,9 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Selection, Template, Identity } from "./types";
 export const COMMS = ["send_message", "wait_message", "list_agents"];
 export const PI_DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
-export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS): string[] {
-  return [...new Set([...(template.tools.include_defaults ? defaults : []), ...template.tools.extra, ...COMMS, ...(template.subagents.allowed.length ? ["create_agent"] : [])])];
+export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS, name = "worker"): string[] {
+  const tools = [...new Set([...(template.tools.include_defaults ? defaults : []), ...template.tools.extra, ...COMMS, ...(template.subagents.allowed.length ? ["create_agent"] : [])])];
+  return name === "main" && !template.subagents.allowed.length ? tools.filter(tool => !COMMS.includes(tool) && tool !== "create_agent") : tools;
 }
 export function checkTools(pi: ExtensionAPI, names: string[]): void {
   const known = new Set(pi.getAllTools().map(t => t.name));
@@ -25,6 +26,6 @@ export function promptIdentity(identity: Identity, template: Template): Record<s
   return {
     agent_identity: "Instance: " + identity.name + ". Role: " + identity.role + ". Parent: " + (identity.parentName ?? "none") + ".",
     agent_template: template.prompt,
-    agent_workspace: "Messages are attributed to their sender. send_message queues steering context and resumes idle agents. wait_message waits up to 600 seconds, but refuses deadlock. Your final answer is automatically sent to your parent if present. Allowed child templates: " + (template.subagents.allowed.join(", ") || "none") + ". Default child: " + (template.subagents.default ?? "none; specify agent_template") + ".",
+    agent_workspace: identity.name === "main" && !template.subagents.allowed.length ? "No child templates are allowed. Workspace tools are unavailable." : "Messages are attributed to their sender. send_message queues steering context and resumes idle agents. wait_message waits up to 600 seconds, but refuses deadlock. Your final answer is automatically sent to your parent if present. Allowed child templates: " + (template.subagents.allowed.join(", ") || "none") + ". Default child: " + (template.subagents.default ?? "none; specify agent_template") + ".",
   };
 }

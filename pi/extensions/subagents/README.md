@@ -59,15 +59,15 @@ All sections except `name` are optional. Unknown fields, duplicate YAML keys, un
 
 `tools.include_defaults: true` uses Pi's resolved `defaultTools`: global `<agent-dir>/settings.json` merged with trusted `<cwd>/.pi/settings.json`, including Pi's `+tool`/`-tool` modifier behavior. When unset, Pi's standard read/bash/edit/write selection is used; an explicit empty array selects none. Workers do not inherit the parent's active tools or CLI overrides. Defaults are resolved when a worker runtime is created (including reconstruction after reload), not continuously during a run.
 
-Explicit `tools.extra` names are added to that selection, and send_message/wait_message/list_agents are always retained. With the enhanced bash extension loaded, interact_bash/close_bash are retained only when default bash is selected. `include_defaults: false` ignores `defaultTools` and keeps only explicit extras plus workspace communications. Interactive-only tools are filtered even when named in defaults or extras.
+Explicit `tools.extra` names are added to that selection, and send_message/wait_message/list_agents are retained for workers and main templates that allow children. When main's template allows no children, all workspace tools are hidden, including those named in defaults or extras. With the enhanced bash extension loaded, interact_bash/close_bash are retained only when default bash is selected. `include_defaults: false` ignores `defaultTools` and keeps only explicit extras plus workspace communications. Interactive-only tools are filtered even when named in defaults or extras.
 
-`create_agent` is unreachable unless the template allows child templates. Explicit creation must use an allowed template; omitting the template requires a configured default, never the first allowlist element. Empty `subagents` means a leaf agent. `subagents.include_defaults` defaults to false to preserve leaf behavior; true allows all valid discovered templates (bundled, user/project agents folders, and configured extra paths), including non-selectable templates. `subagents.extra` adds template names, not paths. `default` must name an allowed template. Legacy `subagents.allowed: [...]` remains supported but cannot be combined with `include_defaults` or `extra`.
+`create_agent` is unreachable unless the template allows child templates. Explicit creation must use an allowed template; omitting the template requires a configured default, never the first allowlist element. Empty `subagents` means a leaf agent. `subagents.include_defaults` defaults to false to preserve leaf behavior; true allows all valid discovered templates (user/project agents folders and configured extra paths), including non-selectable templates. `subagents.extra` adds template names, not paths. `default` must name an allowed template. Legacy `subagents.allowed: [...]` remains supported but cannot be combined with `include_defaults` or `extra`.
 
 Extra tool names must exist. Explicit `mcp__...` names get a bounded 10-second startup window for asynchronous registration; unavailable names still fail preflight. Initial unselected extension registrations are hidden; immutable SDK selection and a tool-call guard enforce restrictions on direct/nested calls, including late registrations. This is a tool policy, **not an OS sandbox**. Configured extensions still execute code with Pi's privileges.
 
 `skills.include_defaults` defaults to true and includes normal Pi skill discovery. False makes worker catalogs extra-path-only. Relative skill paths resolve from the YAML file. This does not copy the parent's transcript or already-read skill bodies. On main, skill filtering changes the model's advertised catalog; it cannot erase earlier context, remove all `/skill:` commands, or prevent reads through allowed tools.
 
-The bundled `main` and `subagent` templates differ only in child permissions: main allows/defaults to subagent; subagent is a leaf. The bundled main preserves your existing main-session tools. Custom main templates narrow the general-purpose loadout while retaining tools for enabled interactive workflows such as plan/goal/question mode.
+This repository's `pi/agents/main.yaml` and `pi/agents/subagent.yaml` are ordinary templates: main allows/defaults to subagent; subagent is a leaf. They must be available through the normal agents directories (including this repository's symlinked configuration) or configured extra paths. The extension has no bundled definitions or special template-name/source-path behavior. Every main template uses the normal settings-based tool loadout while retaining tools for enabled interactive workflows such as plan/goal/question mode.
 
 ## Configuration and precedence
 
@@ -76,21 +76,23 @@ Optional `<agent-dir>/subagents.json` and trusted `<cwd>/.pi/subagents.json`:
 ```json
 {
   "agent_paths": ["./extra-agents"],
+  "default_agent": "main",
   "max_running": 8,
   "max_depth": 4,
   "worker_exclude_extensions": []
 }
 ```
 
-Paths resolve from their owning configuration directory; absolute paths and `~` work. `worker_exclude_extensions` uses exact extension paths. Project scalar limits override user limits. Waiting workers reserve running capacity.
+Paths resolve from their owning configuration directory; absolute paths and `~` work. `worker_exclude_extensions` uses exact extension paths. Project scalar limits and `default_agent` override user values. Waiting workers reserve running capacity.
+
+`default_agent` is an optional template name using the same strict name syntax as YAML definitions; null, empty names, and invalid names are rejected. It selects the interactive template for fresh sessions, including `/new`, and may name a non-selectable template. If omitted, the first selectable discovered template is selected, not a hardcoded `main` template. An unavailable configured default or absence of selectable templates (when no default is set) fails startup. Saved session identity/template selections and durable locks take precedence over this fresh-session default. The selected template's model/thinking settings apply at startup. This repository's `pi/subagents.json` sets `default_agent` to `main`.
 
 Precedence, lowest to highest:
 
-1. Bundled definitions.
-2. User agents directory.
-3. User extra paths in declaration order.
-4. Trusted current-project `.pi/agents`.
-5. Trusted project extra paths.
+1. User agents directory.
+2. User extra paths in declaration order.
+3. Trusted current-project `.pi/agents`.
+4. Trusted project extra paths.
 
 Later locations override by template name. Duplicates within one location and malformed named overrides are quarantined, not silently replaced with older permissive definitions. Definitions naming missing child templates are also quarantined. Discovery is non-recursive and does not search ancestor projects. Run `/reload` to refresh definitions; idle workers use the refreshed template on their next resume.
 

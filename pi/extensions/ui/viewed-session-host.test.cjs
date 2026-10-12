@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtemp, mkdir, rm } = require('node:fs/promises');
+const { mkdtemp, mkdir, writeFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { load, host } = require('../subagents/test-helper.cjs');
@@ -34,6 +34,10 @@ test('real InteractiveMode startup discovers UI service and /subagents demo view
   const dir = await mkdtemp(join(tmpdir(), 'pi-viewed-host-'));
   const cwd = join(dir, 'project'), agentDir = join(dir, 'agent');
   await mkdir(cwd); await mkdir(agentDir);
+  await mkdir(join(agentDir, 'agents'));
+  await writeFile(join(agentDir, 'agents/main.yaml'), 'name: main\nsubagents: {extra: [subagent], default: subagent}');
+  await writeFile(join(agentDir, 'agents/subagent.yaml'), 'name: subagent');
+  await writeFile(join(agentDir, 'subagents.json'), JSON.stringify({default_agent: 'main'}));
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   const events = createEventBus();

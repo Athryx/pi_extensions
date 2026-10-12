@@ -14,7 +14,7 @@ test('all extensions load and execute against the installed pi API', async () =>
   const { loadExtensions } = await host('dist/core/extensions/loader.js');
   const { validateToolArguments } = await host('node_modules/@earendil-works/pi-ai/dist/utils/validation.js');
   const { extensions, errors, runtime } = await loadExtensions(
-    ['ask-question', 'bash', 'context', 'goal-mode', 'plan-mode'].map(name => join(cwd, '.pi/extensions', name, 'index.ts')), cwd,
+    ['ask-question', 'bash', 'context', 'goal-mode', 'plan-mode'].map(name => join(cwd, 'pi/extensions', name, 'index.ts')), cwd,
   );
   assert.deepEqual(errors, []);
   assert.equal(extensions.length, 5);
@@ -63,10 +63,10 @@ test('all extensions load and execute against the installed pi API', async () =>
 
 test('subagents extension loads with the installed host and exposes viewer/template commands', async () => {
   const {loadExtensions} = await host('dist/core/extensions/loader.js');
-  const {extensions, errors} = await loadExtensions([join(cwd, '.pi/extensions/subagents/index.ts')], cwd);
+  const {extensions, errors} = await loadExtensions([join(cwd, 'pi/extensions/subagents/index.ts')], cwd);
   assert.deepEqual(errors, []);
   assert.equal(extensions.length, 1);
   assert.ok(extensions[0].commands.has('agent'));
-  assert.ok(extensions[0].commands.has('agents'));
+  assert.ok(extensions[0].commands.has('subagents'));
   assert.ok(extensions[0].handlers.has('session_shutdown'));
 });

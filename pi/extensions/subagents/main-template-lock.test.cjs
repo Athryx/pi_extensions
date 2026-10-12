@@ -11,7 +11,7 @@ const IDENTITY = 'subagents.identity.v1';
 const user = () => ({role: 'user', content: 'first actual user message', timestamp: Date.now()});
 const deferred = () => { let resolve; const promise = new Promise(r => resolve = r); return {promise, resolve}; };
 
-async function fixture({disk = false, ui = false, seed} = {}) {
+async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', noSelectable = false} = {}) {
   const sdk = await host('dist/index.js');
   const ai = await host('node_modules/@earendil-works/pi-ai/dist/index.js');
   const dir = await mkdtemp(join(tmpdir(), 'pi-main-template-lock-'));
@@ -20,7 +20,7 @@ async function fixture({disk = false, ui = false, seed} = {}) {
   process.env.PI_CODING_AGENT_DIR = agentDir;
   let session;
   const errors = [], notifications = [], menus = [], requests = [], viewed = [];
-  const f = {dir, sdk, errors, notifications, menus, requests, viewed, choice: 'leaf'};
+  const f = {dir, agentDir, sdk, errors, notifications, menus, requests, viewed, choice: 'leaf'};
   async function closeSession() {
     if (session) {
       await session.extensionRunner.emit({type: 'session_shutdown', reason: 'quit'});
@@ -34,8 +34,14 @@ async function fixture({disk = false, ui = false, seed} = {}) {
   };
   try {
     await mkdir(join(agentDir, 'agents'), {recursive: true});
+    await writeFile(join(agentDir, 'agents/main.yaml'), 'name: main\nsubagents: {extra: [subagent], default: subagent}');
+    await writeFile(join(agentDir, 'agents/subagent.yaml'), 'name: subagent');
+    if (defaultAgent !== null) await writeFile(join(agentDir, 'subagents.json'), JSON.stringify({default_agent: defaultAgent}));
     await writeFile(join(agentDir, 'agents/leaf.yaml'), 'name: leaf\ntools: {include_defaults: false, extra: [read]}\nmodel: {name: parent}');
     await writeFile(join(agentDir, 'agents/hidden.yaml'), 'name: hidden\nselectable: false');
+    if (noSelectable) for (const name of ['main', 'subagent', 'leaf']) {
+      await writeFile(join(agentDir, 'agents', name + '.yaml'), 'name: ' + name + '\nselectable: false');
+    }
     const settings = sdk.SettingsManager.inMemory();
     const runtime = await sdk.ModelRuntime.create({authPath: join(agentDir, 'auth.json'), modelsPath: null, refreshOnCreate: false});
     runtime.registerProvider('main-lock-test', {
@@ -93,6 +99,45 @@ async function fixture({disk = false, ui = false, seed} = {}) {
     return f;
   } catch (error) { await f.cleanup(); throw error; }
 }
+
+test('configured default selects a fresh session, but saved selection and locks win on reload', async () => {
+  const f = await fixture({defaultAgent: 'hidden'});
+  try {
+    assert.equal(await f.template(), 'hidden'); // Explicit defaults need not be selectable.
+    await f.command('leaf');
+    await writeFile(join(f.agentDir, 'subagents.json'), JSON.stringify({default_agent: 'main'}));
+    await f.reload(); assert.equal(await f.template(), 'leaf');
+    await f.emitUser(); assertLocked(f);
+    await writeFile(join(f.agentDir, 'subagents.json'), JSON.stringify({default_agent: 'hidden'}));
+    await f.reload(); assert.equal(await f.template(), 'leaf'); assertLocked(f);
+    f.manager.newSession(); await f.emit({type: 'session_start', reason: 'new'});
+    assert.equal(await f.template(), 'hidden'); assert.deepEqual(f.locks(), []);
+  } finally { await f.cleanup(); }
+});
+
+test('absent default selects the first selectable discovered template rather than main', async () => {
+  const f = await fixture({defaultAgent: null});
+  try {
+    assert.equal(await f.template(), 'leaf');
+    assert.deepEqual(f.errors, []);
+  } finally { await f.cleanup(); }
+});
+
+test('unavailable configured default fails startup rather than silently falling back', async () => {
+  await assert.rejects(fixture({defaultAgent: 'missing'}), /missing|unavailable/i);
+});
+
+test('without configured default, no selectable templates fails startup', async () => {
+  await assert.rejects(fixture({defaultAgent: null, noSelectable: true}), /selectable/i);
+});
+
+test('saved identity selection wins over configured fresh-session default', async () => {
+  const f = await fixture({defaultAgent: 'main', seed(manager) {
+    manager.appendCustomEntry(IDENTITY, {version: 1, workspaceId: 'saved-workspace', instanceId: 'saved-main', name: 'main', template: 'hidden', role: 'interactive', parentName: null, rootSessionFile: manager.getSessionFile()});
+  }});
+  try { assert.equal(await f.template(), 'hidden'); assert.deepEqual(f.locks(), []); }
+  finally { await f.cleanup(); }
+});
 
 function assertLocked(f, template = 'leaf') { assert.deepEqual(f.locks(), [{version: 1, template}]); }
 const lockedError = error => error instanceof Error && /first user message/i.test(error.message) && /\/new/.test(error.message);

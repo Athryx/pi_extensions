@@ -17,7 +17,9 @@ export function registerTools(pi: ExtensionAPI, workspace: () => Workspace, name
       return result({name: args.name, status: "started"}, "Agent " + args.name + " started.");
     },
   });
+  const exposure = name === "main" && !allowCreate ? "hidden" : "direct";
   pi.registerTool({
+    exposure,
     name: "send_message", label: "Send message", executionMode: "parallel",
     description: "Send attributed steering context to a workspace agent. Resumes idle agents in their existing session.",
     parameters: object({agent_name: Type.String(), message: Type.String()}),
@@ -25,12 +27,14 @@ export function registerTools(pi: ExtensionAPI, workspace: () => Workspace, name
     async execute(_id, args) { const id = await workspace().send(name, args.agent_name, args.message); return result({id, status: "queued"}); },
   });
   pi.registerTool({
+    exposure,
     name: "wait_message", label: "Wait for message", executionMode: "parallel",
     description: "Wait for a workspace message; timeout is seconds, default 120, maximum 600. Refuses when nobody else can make progress.",
     parameters: object({timeout: Type.Optional(Type.Number({exclusiveMinimum: 0, maximum: 600}))}),
     async execute(_id, args, signal) { return result(await workspace().wait(name, args.timeout ?? 120, signal)); },
   });
   pi.registerTool({
+    exposure,
     name: "list_agents", label: "List agents", executionMode: "parallel",
     description: "List direct children (including idle children). all=true lists the whole workspace and parent relationships.",
     parameters: object({all: Type.Optional(Type.Boolean())}),

@@ -1,4 +1,0 @@
-name: main
-subagents:
-  allowed: [subagent]
-  default: subagent

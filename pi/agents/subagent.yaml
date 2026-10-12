@@ -1,0 +1,11 @@
+name: subagent
+selectable: true
+model:
+  name: global
+  thinking: global
+tools:
+  include_defaults: true
+skills:
+  include_defaults: true
+subagents:
+  include_defaults: false

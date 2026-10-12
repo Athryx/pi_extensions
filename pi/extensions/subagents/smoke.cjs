@@ -5,6 +5,10 @@ const {join} = require('node:path');
 const dir = mkdtempSync(join(tmpdir(),'pi-subagents-smoke-'));
 mkdirSync(join(dir,'agent/extensions'),{recursive:true});mkdirSync(join(dir,'project'),{recursive:true});
 writeFileSync(join(dir,'agent/settings.json'), JSON.stringify({quietStartup:true,tuiMode:'fullscreen'}));
+mkdirSync(join(dir,'agent/agents'),{recursive:true});
+writeFileSync(join(dir,'agent/agents/main.yaml'), 'name: main\nsubagents: {allowed: [subagent], default: subagent}\n');
+writeFileSync(join(dir,'agent/agents/subagent.yaml'), 'name: subagent\n');
+writeFileSync(join(dir,'agent/subagents.json'), JSON.stringify({default_agent:'main'}));
 writeFileSync(join(dir,'agent/extensions/fake.ts'), `
 import {createAssistantMessageEventStream,getCurrentSystemPrompt} from '@earendil-works/pi-ai';
 export default function(pi) {

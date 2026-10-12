@@ -4,6 +4,36 @@ const {mkdtemp, mkdir, writeFile, rm} = require('node:fs/promises');
 const {tmpdir} = require('node:os');
 const {join} = require('node:path');
 const {load} = require('./test-helper.cjs');
+test('default_agent is optional, strict, project-trusted and project-preferred', async () => {
+  const {loadConfig} = await load('config.ts');
+  const dir = await mkdtemp(join(tmpdir(), 'subagents-default-agent-'));
+  const user = join(dir, 'user'), project = join(dir, 'project');
+  try {
+    await mkdir(user); await mkdir(join(project, '.pi'), {recursive: true});
+    assert.equal((await loadConfig(user, project, true)).default_agent, undefined);
+    await writeFile(join(user, 'subagents.json'), JSON.stringify({default_agent: 'user_agent'}));
+    await writeFile(join(project, '.pi/subagents.json'), JSON.stringify({default_agent: 'Project-Agent'}));
+    assert.equal((await loadConfig(user, project, false)).default_agent, 'user_agent');
+    assert.equal((await loadConfig(user, project, true)).default_agent, 'Project-Agent');
+    await writeFile(join(project, '.pi/subagents.json'), JSON.stringify({max_depth: 2}));
+    assert.equal((await loadConfig(user, project, true)).default_agent, 'user_agent');
+    for (const value of [null, false, 1, [], {}, '', ' ', 'bad name', '../main', '1main', 'a'.repeat(65)]) {
+      await writeFile(join(project, '.pi/subagents.json'), JSON.stringify({default_agent: value}));
+      await assert.rejects(loadConfig(user, project, true), /default_agent/);
+      assert.equal((await loadConfig(user, project, false)).default_agent, 'user_agent');
+    }
+    await writeFile(join(project, '.pi/subagents.json'), JSON.stringify({default_agent: 'a'.repeat(64)}));
+    assert.equal((await loadConfig(user, project, true)).default_agent.length, 64);
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('discovery has no implicit bundled definitions', async () => {
+  const {discoverTemplates} = await load('templates.ts');
+  const result = await discoverTemplates([]);
+  assert.equal(result.templates.size, 0);
+  assert.deepEqual(result.diagnostics, []);
+});
+
 test('strict YAML normalization and validation', async () => {
   const {parseTemplate} = await load('templates.ts');
   const p = text => parseTemplate(text, '/tmp/agents/test.yaml');
@@ -75,5 +105,13 @@ test('independent model inheritance, child permissions and strict tool schemas',
   assert.equal(loadout(t).includes('create_agent'),false);
   const tools=[]; registerTools({registerTool:t=>tools.push(t)},()=>{},'worker',false);
   assert.equal(tools.find(t=>t.name==='create_agent').exposure,'hidden');
+  for (const name of ['send_message','wait_message','list_agents']) {
+    assert.ok(loadout(t).includes(name));
+    assert.notEqual(tools.find(tool=>tool.name===name).exposure,'hidden');
+  }
+  const mainTools=[]; registerTools({registerTool:tool=>mainTools.push(tool)},()=>{},'main',false);
+  assert.ok(mainTools.every(tool=>tool.exposure==='hidden'));
+  const explicit=parseTemplate('name: leaf\ntools: {extra: [create_agent, send_message, wait_message, list_agents]}', '/tmp/leaf.yaml');
+  assert.deepEqual(loadout(explicit, ['read','list_agents'], 'main'), ['read']);
   for(const t of tools) assert.equal(t.parameters.additionalProperties,false);
 });

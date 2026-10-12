@@ -139,7 +139,7 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
   const dir = await mkdtemp(join(tmpdir(), 'pi-agent-selection-'));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(dir, 'agent');
-  // The bundled test module lives in a temp directory; supply definitions explicitly.
+  // Templates are external resources, so supply explicit test definitions.
   await mkdir(join(dir, 'agent/agents'), {recursive: true});
   await writeFile(join(dir, 'agent/agents/main.yaml'), 'name: main\nsubagents: {allowed: [subagent], default: subagent}\n');
   await writeFile(join(dir, 'agent/agents/subagent.yaml'), 'name: subagent\n');

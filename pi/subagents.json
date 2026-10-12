@@ -1,0 +1,7 @@
+{
+  "default_agent": "main",
+  "agent_paths": [],
+  "max_running": 8,
+  "max_depth": 4,
+  "worker_exclude_extensions": []
+}
