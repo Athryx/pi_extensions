@@ -3,11 +3,12 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { Api, Model } from "@earendil-works/pi-ai";
 export interface Template {
   name: string;
+  selectable: boolean;
   model: { name: string; thinking: string };
   tools: { include_defaults: boolean; extra: string[] };
   skills: { include_defaults: boolean; extra_paths: string[] };
   prompt: string;
-  subagents: { allowed: string[]; default?: string };
+  subagents: { include_defaults: boolean; extra: string[]; allowed: string[]; default?: string };
   source: string;
 }
 export interface Config { agent_paths: string[]; max_running: number; max_depth: number; worker_exclude_extensions: string[] }

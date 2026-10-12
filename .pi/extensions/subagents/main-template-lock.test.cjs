@@ -35,6 +35,7 @@ async function fixture({disk = false, ui = false, seed} = {}) {
   try {
     await mkdir(join(agentDir, 'agents'), {recursive: true});
     await writeFile(join(agentDir, 'agents/leaf.yaml'), 'name: leaf\ntools: {include_defaults: false, extra: [read]}\nmodel: {name: parent}');
+    await writeFile(join(agentDir, 'agents/hidden.yaml'), 'name: hidden\nselectable: false');
     const settings = sdk.SettingsManager.inMemory();
     const runtime = await sdk.ModelRuntime.create({authPath: join(agentDir, 'auth.json'), modelsPath: null, refreshOnCreate: false});
     runtime.registerProvider('main-lock-test', {
@@ -65,12 +66,14 @@ async function fixture({disk = false, ui = false, seed} = {}) {
       await loader.reload(); // A disposed SDK invalidates its extension factories/context.
       assert.deepEqual(loader.getExtensions().errors, []);
       ({session} = await sdk.createAgentSession({cwd: dir, agentDir, settingsManager: settings, resourceLoader: loader, sessionManager: manager, modelRuntime: runtime, model}));
-      await session.bindExtensions({mode: ui ? 'tui' : 'print', ...(ui ? {uiContext: {notify: (message, type) => notifications.push({message, type}), select: async (title, options) => { menus.push({title, options}); return f.pick ? f.pick() : f.choice; }}} : {}), onError: error => errors.push(error)});
+      await session.bindExtensions({mode: ui ? 'tui' : 'print', ...(ui ? {uiContext: {setWidget() {}, notify: (message, type) => notifications.push({message, type}), select: async (title, options) => { menus.push({title, options}); return f.pick ? f.pick() : f.choice; }}} : {}), onError: error => errors.push(error)});
       assert.deepEqual(errors, []);
     };
     f.locks = () => f.manager.getEntries().filter(e => e.type === 'custom' && e.customType === LOCK).map(e => e.data);
     f.command = (args = '', ctx) => session.extensionRunner.getCommand('agent').handler(args, ctx ?? session.extensionRunner.createCommandContext());
     f.context = () => session.extensionRunner.createCommandContext();
+    f.completions = prefix => session.extensionRunner.getCommand('agent').getArgumentCompletions(prefix);
+    f.hasCommand = name => !!session.extensionRunner.getCommand(name);
     f.emit = event => session.extensionRunner.emit(event);
     f.prompt = text => session.prompt(text);
     f.reload = () => session.reload();
@@ -116,6 +119,27 @@ test('slash commands, custom state/context and system messages leave an empty se
   } finally { await f.cleanup(); }
 });
 
+test('selectable only filters the template picker/completions; viewer command is renamed', async () => {
+  const f = await fixture({ui: true});
+  try {
+    assert.equal(f.hasCommand('agents'), false);
+    assert.equal(f.hasCommand('subagents'), true);
+    assert.equal(f.completions('').some(item => item.value === 'hidden'), false);
+    assert.ok(f.completions('le').some(item => item.value === 'leaf'));
+    f.choice = undefined;
+    await f.command();
+    assert.equal(f.menus.at(-1).options.includes('hidden'), false);
+    assert.ok(f.menus.at(-1).options.includes('leaf'));
+    await f.command('hidden');
+    assert.equal(await f.template(), 'hidden');
+    await f.reload();
+    assert.equal(await f.template(), 'hidden');
+    await f.prompt('/subagents main');
+    assert.equal(f.viewed.at(-1), undefined);
+    assert.deepEqual(f.errors, []);
+  } finally { await f.cleanup(); }
+});
+
 test('first real prompt durably locks selected template before the provider runs; no UI rejects', async () => {
   const f = await fixture({disk: true});
   try {
@@ -138,7 +162,7 @@ test('first real prompt durably locks selected template before the provider runs
   } finally { await f.cleanup(); }
 });
 
-test('locked UI commands warn without picker or mutation; native /agents viewer still works', async () => {
+test('locked UI commands warn without picker or mutation; native /subagents viewer still works', async () => {
   const f = await fixture({ui: true});
   try {
     await f.command('leaf'); await f.emitUser(); assertLocked(f);
@@ -148,7 +172,7 @@ test('locked UI commands warn without picker or mutation; native /agents viewer 
     for (const notice of f.notifications) { assert.equal(notice.type, 'warning'); assert.match(notice.message, /first user message.*\/new/i); }
     assert.deepEqual(f.manager.getEntries(), before); assert.deepEqual(f.tools(), tools);
     assert.equal(await f.template(), 'leaf'); assert.deepEqual(f.errors, []);
-    f.choice = 'main'; await f.prompt('/agents');
+    f.choice = 'main'; await f.prompt('/subagents');
     assert.equal(f.menus.length, 1); assert.deepEqual(f.menus[0].options, ['main']);
     assert.equal(f.viewed.length, 1); assert.equal(f.viewed[0], undefined);
     assert.deepEqual(f.manager.getEntries(), before);

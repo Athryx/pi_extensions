@@ -28,6 +28,38 @@ async function load() {
   return module.exports.default;
 }
 
+test('running goals return guidance without opening UI; latest branch state wins', async () => {
+  const init = await load();
+  let tool;
+  const pi = { on: (_, cb) => { pi.start = cb; }, registerTool: (value) => { tool = value; } };
+  init(pi);
+  pi.start({}, { mode: 'tui' });
+  const goal = (status) => ({ type: 'custom', customType: 'project-goal-mode', data: {
+    goal: status === 'completed' ? null : 'Work', status, generation: 1,
+  } });
+  let branch = [goal('running')];
+  let shown = 0;
+  const ctx = { mode: 'tui', sessionManager: { getBranch: () => branch, getEntries: () => [] },
+    ui: { custom: async () => { shown++; return null; } } };
+  const call = () => tool.execute('a', { questions: [{ question: 'Proceed?' }] }, undefined, undefined, ctx);
+  const result = await call();
+  assert.match(result.content[0].text, /Can't ask questions in goal mode/);
+  assert.match(result.content[0].text, /best judgement.*blocked.*genuine blocker/);
+  assert.equal(result.details, undefined);
+  assert.equal(shown, 0);
+  assert.equal(tool.renderResult(result, {}, { fg: (_, s) => s }).text, result.content[0].text);
+  for (const status of ['blocked', 'completed']) {
+    branch = [goal('running'), goal(status)];
+    assert.equal((await call()).details.questions[0].answer, null);
+  }
+  branch = [];
+  await call();
+  assert.equal(shown, 3);
+  branch = [goal('completed'), goal('running')];
+  assert.match((await call()).content[0].text, /Can't ask questions/);
+  assert.equal(shown, 3);
+});
+
 test('headless mode registers only a hidden tool without usage guidance', async () => {
   const init = await load();
   const tools = [];

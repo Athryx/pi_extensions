@@ -15,9 +15,11 @@ Pi supplies the peer packages; `--legacy-peer-deps` prevents npm from installing
 Commands:
 
 - `/agent [template]`: select the main conversation's template by name, or open Pi's native picker. Main must be idle and the session must not yet contain an actual user message. You can freely change templates before the first prompt; `/agent` commands, system messages, extension state, and custom context messages do not count. After the first user message, the template is locked: UI modes warn without opening a picker; modes without UI report an error. Use `/new` for an empty conversation where you can choose again. The command preserves the instance name, role, and existing children.
-- `/agents [name]`: with the UI extension's viewed-session API, choose any workspace agent (including idle workers) using Pi's native selector, or view a named agent directly. `/agents main` restores the main transcript. Worker views are **read-only**, remain live when workers become idle or resume, and use the UI's normal transcript rendering/scrolling. Selection never switches the actual Pi session or grants interactive control to workers; root navigation, reload and shutdown clear it. In print mode this lists workspace members; RPC uses a notification and JSON uses a custom message, regardless of arguments.
+- `/subagents [name]`: with the UI extension's viewed-session API, choose any workspace agent (including idle workers) using Pi's native selector, or view a named agent directly. `/subagents main` restores the main transcript. Worker views are **read-only**, remain live when workers become idle or resume, and use the UI's normal transcript rendering/scrolling. Selection never switches the actual Pi session or grants interactive control to workers; root navigation, reload and shutdown clear it. In print mode this lists workspace members; RPC uses a notification and JSON uses a custom message, regardless of arguments.
 
-Without a compatible viewed-session UI API, `/agents` retains the full-screen read-only overlay. Overlay keys: Tab/Shift+Tab or left/right cycle agents; up/down, PageUp/PageDown and Home/End scroll; End follows streaming output; `i` includes idle/error/interrupted agents; `o` expands tool output; Escape or `q` returns to main. Mouse wheel scrolls the selected transcript. Selected workers remain visible when they become idle. Images from tool results honor the session's Pi settings; user image attachments currently show their accompanying text only.
+In TUI mode an always-visible, wrapping row below the prompt lists every workspace agent as `● name (template)`. The dot is green for starting/running/waiting agents and grey for idle/error/interrupted agents; the viewed agent is highlighted (main when no worker is viewed). **Alt+]** / **Alt+[** cycle forward/backward through all agents, including main and idle workers. **Escape** returns to main. These shortcuts require the UI extension's viewed-session API; `/subagents` keeps its native picker and overlay fallback.
+
+Without a compatible viewed-session UI API, `/subagents` retains the full-screen read-only overlay. Overlay keys: Tab/Shift+Tab or left/right cycle agents; up/down, PageUp/PageDown and Home/End scroll; End follows streaming output; `i` includes idle/error/interrupted agents; `o` expands tool output; Escape or `q` returns to main. Mouse wheel scrolls the selected transcript. Selected workers remain visible when they become idle. Images from tool results honor the session's Pi settings; user image attachments currently show their accompanying text only.
 
 ## YAML definitions
 
@@ -25,6 +27,7 @@ Put direct `.yaml`/`.yml` files in `<agent-dir>/agents/` (normally `~/.pi/agent/
 
 ```yaml
 name: reviewer
+selectable: true
 model:
   name: parent
   thinking: parent
@@ -37,11 +40,14 @@ skills:
 prompt: |
   Review your assigned change and report findings with evidence.
 subagents:
-  allowed: [subagent]
+  include_defaults: false
+  extra: [subagent]
   default: subagent
 ```
 
 All sections except `name` are optional. Unknown fields, duplicate YAML keys, unsupported tags, multiple documents, invalid references, and excessive alias expansion are rejected. Templates/tasks/messages are limited to 128 KiB. Names are case-sensitive, start with a letter, and contain up to 64 letters, digits, underscores or hyphens.
+
+`selectable` defaults to true. False hides a template from the `/agent` picker and completions only; explicit `/agent name`, child permissions, and `/subagents` workspace views are unaffected.
 
 ### Models
 
@@ -55,7 +61,7 @@ All sections except `name` are optional. Unknown fields, duplicate YAML keys, un
 
 Explicit `tools.extra` names are added to that selection, and send_message/wait_message/list_agents are always retained. With the enhanced bash extension loaded, interact_bash/close_bash are retained only when default bash is selected. `include_defaults: false` ignores `defaultTools` and keeps only explicit extras plus workspace communications. Interactive-only tools are filtered even when named in defaults or extras.
 
-`create_agent` is unreachable unless the template allows child templates. Explicit creation must use an allowed template; omitting the template requires a configured default, never the first allowlist element. Empty `subagents` means a leaf agent.
+`create_agent` is unreachable unless the template allows child templates. Explicit creation must use an allowed template; omitting the template requires a configured default, never the first allowlist element. Empty `subagents` means a leaf agent. `subagents.include_defaults` defaults to false to preserve leaf behavior; true allows all valid discovered templates (bundled, user/project agents folders, and configured extra paths), including non-selectable templates. `subagents.extra` adds template names, not paths. `default` must name an allowed template. Legacy `subagents.allowed: [...]` remains supported but cannot be combined with `include_defaults` or `extra`.
 
 Extra tool names must exist. Explicit `mcp__...` names get a bounded 10-second startup window for asynchronous registration; unavailable names still fail preflight. Initial unselected extension registrations are hidden; immutable SDK selection and a tool-call guard enforce restrictions on direct/nested calls, including late registrations. This is a tool policy, **not an OS sandbox**. Configured extensions still execute code with Pi's privileges.
 
@@ -117,7 +123,7 @@ Restart/reload reconstructs workers as idle, with no automatic token spending on
 
 Main's template is fixed when its first actual user message is emitted. A durable non-context custom entry, `subagents.main-template-lock.v1`, records `{version: 1, template: "<selected name>"}`. The lock is session-wide, not branch-relative: reload/resume, compaction, and tree navigation scan **all** entries for this marker and old user history. Backtracking before the first prompt cannot unlock the session or restore an earlier template selection; the locked template wins over branch-local choices. Existing sessions with user history but no marker are migrated by locking their current chosen template at startup. A pending `/agent` picker rechecks the lock, current workspace, and idle state before applying its result.
 
-A genuinely empty `/new` session unlocks template selection. Forks carrying user history or a lock marker inherit the lock, including a marker-only fork made before the user message was persisted. `/agents` remains a read-only viewer and is unaffected by template locking.
+A genuinely empty `/new` session unlocks template selection. Forks carrying user history or a lock marker inherit the lock, including a marker-only fork made before the user message was persisted. `/subagents` remains a read-only viewer and is unaffected by template locking.
 
 Main session forks get new workspace identities and do not reuse original workers. Tree navigation uses branch-relative membership and stops old runs before reconstruction. Ephemeral roots use in-memory workers; tree navigation retains their histories within the process. No ephemeral history survives process exit.
 

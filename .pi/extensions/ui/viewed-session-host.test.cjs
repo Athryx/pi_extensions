@@ -26,7 +26,7 @@ function terminal() {
   };
 }
 
-test('real InteractiveMode startup discovers UI service and /agents demo views a real in-process SDK worker', { timeout: 20000 }, async () => {
+test('real InteractiveMode startup discovers UI service and /subagents demo views a real in-process SDK worker', { timeout: 20000 }, async () => {
   const sdk = await host('dist/index.js');
   const ai = await host('node_modules/@earendil-works/pi-ai/dist/index.js');
   const { createEventBus } = await host('dist/core/event-bus.js');
@@ -102,17 +102,23 @@ test('real InteractiveMode startup discovers UI service and /agents demo views a
     assert.equal(mode.documentContainer.children[2], mode.chatContainer);
     assert.equal(mode.renderer.getFocusedComponent(), mode.editor);
     assert.deepEqual(requests, [], 'startup does not invoke any model');
+    assert.match(plain(mode.renderer.children[5].render(100)), /● main \(main\)/);
     const create = runtime.session.getToolDefinition('create_agent');
     assert.ok(create);
     // The actual subagents tool owns the real workspace; only the model provider is fake.
     await create.execute('host-create-demo', { name: 'demo', task: 'Give a deterministic test answer.' }, new AbortController().signal);
     await until(() => requests.some(request => request.worker));
-    await runtime.session.prompt('/agents demo');
+    await runtime.session.prompt('/subagents demo');
     const viewedId = service.getViewedSession().id;
     assert.match(service.getViewedSession().title, /demo/);
     assert.notEqual(mode.documentContainer.children[2], mode.chatContainer);
     await until(() => plain(mode.documentContainer.children[2].render(100)).includes('WORKER LIVE HOST TEXT'));
     assert.doesNotMatch(plain(mode.documentContainer.children[2].render(100)), /MAIN HOST HISTORY/);
+    assert.match(plain(mode.renderer.children[5].render(100)), /● demo \(subagent\)/);
+    term.press('\x1b]'); // Alt+] cycles worker → main without switching sessions.
+    await until(() => !service.getViewedSession());
+    term.press('\x1b['); // Alt+[ cycles main → worker, even while it runs.
+    await until(() => service.getViewedSession()?.id === viewedId);
     const history = [...mode.editor.history];
     const mainMessages = [...runtime.session.messages];
     const mainChatChildren = [...mode.chatContainer.children];
@@ -132,18 +138,22 @@ test('real InteractiveMode startup discovers UI service and /agents demo views a
     assert.equal(service.getViewedSession(), undefined);
     assert.equal(mode.documentContainer.children[2], mode.chatContainer);
     // Use the host's production renderer-switch path, then rediscover on its real layout.
-    assert.equal(mode.switchTuiMode('fullscreen', false, false), true);
+    assert.equal(mode.switchTuiMode('fullscreen', false, true), true);
     assert.equal(mode.renderer.children.length, 7);
     assert.equal(shared.requestViewedSessionAPI({ events }).available, true);
-    await runtime.session.prompt('/agents demo');
+    await runtime.session.prompt('/subagents demo');
     assert.equal(shared.requestViewedSessionAPI({ events }).getViewedSession().id, viewedId);
     mode.renderer.renderNow();
     assert.match(plain(mode.documentContainer.children[2].render(100)), /WORKER LIVE HOST TEXT/);
     releaseWorker();
     await until(() => plain(mode.documentContainer.children[2].render(100)).includes('WORKER FINAL HOST TEXT'));
-    await runtime.session.prompt('/agents main');
+    await runtime.session.prompt('/subagents main');
     assert.equal(shared.requestViewedSessionAPI({ events }).getViewedSession(), undefined);
     assert.equal(mode.documentContainer.children[2], mode.chatContainer);
+    term.press('\x1b]'); // Idle workers remain in the cycle in fullscreen.
+    await until(() => shared.requestViewedSessionAPI({ events }).getViewedSession()?.id === viewedId);
+    assert.match(plain(mode.renderer.children[5].render(100)), /● demo \(subagent\)/);
+    term.press('\x1b');
     assert.ok(term.writes.length > 0, 'native renderers draw through the injected terminal');
     assert.ok(requests.every(request => request.context), 'all model work used the deterministic local provider');
   } finally {

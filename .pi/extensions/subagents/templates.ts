@@ -22,26 +22,32 @@ export function parseTemplate(text: string, source: string): Template {
   const document = parseDocument(text, { uniqueKeys: true, strict: true });
   if (document.errors.length || document.warnings.length) throw new Error([...document.errors, ...document.warnings].map(e => e.message).join("; "));
   const raw = document.toJS({ maxAliasCount: 32 });
-  const data = object(raw, ["name", "model", "tools", "skills", "prompt", "subagents"], source);
+  const data = object(raw, ["name", "selectable", "model", "tools", "skills", "prompt", "subagents"], source);
   if (typeof data.name !== "string") throw new Error("name must be a string");
   validName(data.name);
   const model = object(data.model ?? {}, ["name", "thinking"], "model");
   const tools = object(data.tools ?? {}, ["include_defaults", "extra"], "tools");
   const skills = object(data.skills ?? {}, ["include_defaults", "extra_paths"], "skills");
-  const children = object(data.subagents ?? {}, ["allowed", "default"], "subagents");
+  const children = object(data.subagents ?? {}, ["allowed", "include_defaults", "extra", "default"], "subagents");
   const name = inherit(model.name, "model.name"), thinking = inherit(model.thinking, "model.thinking");
   if (!["parent", "global"].includes(name) && !/^[^/]+\/.+$/.test(name)) throw new Error("Explicit model must be provider/model-id");
   if (!["parent", "global", "off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinking)) throw new Error("Invalid thinking level");
   if (data.prompt !== undefined && typeof data.prompt !== "string") throw new Error("prompt must be a string");
-  const allowed = strings(children.allowed ?? [], "subagents.allowed");
+  if (children.allowed !== undefined && (children.include_defaults !== undefined || children.extra !== undefined)) throw new Error("subagents.allowed cannot be combined with include_defaults or extra");
+  const include_defaults = bool(children.include_defaults === undefined ? false : children.include_defaults, "subagents.include_defaults");
+  const allowed = strings(children.allowed ?? children.extra ?? [], "subagents.extra");
   allowed.forEach(validName);
-  if (children.default !== undefined && (typeof children.default !== "string" || !allowed.includes(children.default))) throw new Error("subagents.default must be in allowed");
+  if (children.default !== undefined) {
+    if (typeof children.default !== "string") throw new Error("subagents.default must be a template name");
+    validName(children.default);
+    if (!include_defaults && !allowed.includes(children.default)) throw new Error("subagents.default must be in allowed");
+  }
   return {
-    name: data.name, source, model: { name, thinking },
+    name: data.name, selectable: bool(data.selectable, "selectable"), source, model: { name, thinking },
     tools: { include_defaults: bool(tools.include_defaults, "tools.include_defaults"), extra: strings(tools.extra ?? [], "tools.extra") },
     skills: { include_defaults: bool(skills.include_defaults, "skills.include_defaults"), extra_paths: strings(skills.extra_paths ?? [], "skills.extra_paths").map(p => pathFrom(dirname(source), p)) },
     prompt: data.prompt as string ?? "",
-    subagents: { allowed, default: children.default as string | undefined },
+    subagents: { include_defaults, extra: allowed, allowed, default: children.default as string | undefined },
   };
 }
 async function files(path: string): Promise<string[]> {
@@ -80,9 +86,15 @@ export async function discoverTemplates(paths: string[]): Promise<{templates: Ma
   let changed = true;
   while (changed) {
     changed = false;
-    for (const [name, template] of templates) if (template.subagents.allowed.some(n => !templates.has(n))) {
+    for (const [name, template] of templates) if ([...template.subagents.extra, ...(template.subagents.default ? [template.subagents.default] : [])].some(n => !templates.has(n))) {
       diagnostics.push(template.source + ": missing child template"); templates.delete(name); changed = true;
     }
+  }
+  // Expand only after quarantine so defaults never retain invalid definitions.
+  for (const template of templates.values()) {
+    template.subagents.allowed = [...new Set([
+      ...(template.subagents.include_defaults ? templates.keys() : []), ...template.subagents.extra,
+    ])];
   }
   return {templates, diagnostics};
 }

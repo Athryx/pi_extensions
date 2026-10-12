@@ -180,7 +180,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     let batch: Pending[] = [];
     let scheduled = false;
-    registerInteractiveTool<typeof schema, BatchDetails>(pi, {
+    registerInteractiveTool<typeof schema, BatchDetails | undefined>(pi, {
       name: "ask_question",
       label: "Ask Question",
       exposure: "model-only",
@@ -188,12 +188,29 @@ export default function (pi: ExtensionAPI) {
       description: "Ask the user one or more questions in a single tabbed form. Pass all questions in the questions array. Choices appear in the supplied order, followed by Other; omit choices for a free response. The user can also add optional notes.",
       promptSnippet: "Ask the user questions in one call with ordered choices or free-form responses and optional notes",
       promptGuidelines: [
+        "Do not ask questions while a goal is running. Use your best judgement, or mark the goal as blocked if there is a genuine blocker.",
         "Use ask_question when a decision or clarification needs the user's input. Group all questions that can be asked together into the questions array in a single ask_question call, rather than making separate calls. Wait for all answers before proceeding.",
         "For ask_question multiple-choice questions, provide three meaningful choices when possible. Put the recommended choice first and append ' (Recommended)' to its text; if none is recommended, do not mark any choice as recommended. Do not include an Other choice yourself; ask_question adds it automatically.",
         "For an ask_question that needs an unrestricted free-form response, omit choices or pass an empty list instead of inventing choices. The user may add optional notes to any answer.",
       ],
       parameters: schema,
       async execute(id, params, signal, _onUpdate, toolCtx) {
+        // Read the active branch at call time, including after reloads and tree navigation.
+        const branch = toolCtx.sessionManager?.getBranch() ?? [];
+        for (let index = branch.length - 1; index >= 0; index--) {
+          const entry = branch[index];
+          if (entry.type !== "custom" || entry.customType !== "project-goal-mode" || !entry.data) continue;
+          const state = entry.data as { goal?: string | null; status?: string; generation?: number };
+          if (typeof state.generation !== "number" || !["running", "blocked", "completed"].includes(state.status ?? "")) continue;
+          if (state.status !== "completed" && (typeof state.goal !== "string" || !state.goal.trim())) continue;
+          if (state.status === "running") {
+            return {
+              content: [{ type: "text" as const, text: "Can't ask questions in goal mode. Use your best judgement, or mark the goal as blocked if there is a genuine blocker." }],
+              details: undefined,
+            };
+          }
+          break;
+        }
         const pending = params.questions.map((item, index) =>
           new Promise<QuestionDetails>((resolve) => {
             const choices = item.choices ?? [];
@@ -231,7 +248,7 @@ export default function (pi: ExtensionAPI) {
         return new Text(questions?.length ? questions.map(({ question, answer }) =>
           answer ? theme.fg("success", `✓ ${question}: ${answer.answer}${answer.notes ? ` (notes: ${answer.notes})` : ""}`)
             : theme.fg("warning", `${question}: Cancelled`),
-        ).join("\n") : theme.fg("warning", "Cancelled"), 0, 0);
+        ).join("\n") : theme.fg("warning", result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n") || "Cancelled"), 0, 0);
       },
     }, ctx);
   });

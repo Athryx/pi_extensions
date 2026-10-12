@@ -40,6 +40,19 @@ export class AgentViewSelection {
     return true;
   }
 
+  /** Cycle in workspace order, including main and idle workers. */
+  async cycle(workspace: Workspace, direction: 1 | -1, ctx: ExtensionContext): Promise<boolean> {
+    if (ctx.mode !== "tui" || workspace.closed) return false;
+    const api = requestViewedSessionAPI(this.pi);
+    if (!api?.available) return false;
+    const records = [...workspace.records.values()];
+    if (!records.length) return true;
+    const viewed = api.getViewedSession()?.id;
+    const index = viewed ? records.findIndex(record => record.identity.instanceId === viewed) : 0;
+    const next = records[((index < 0 ? 0 : index) + direction + records.length) % records.length];
+    return this.select(workspace, next.identity.name, ctx);
+  }
+
   /** Drop old workspace references on reload, navigation, replacement or shutdown. */
   clear(): void {
     const owned = this.owned;

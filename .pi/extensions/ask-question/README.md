@@ -6,6 +6,8 @@ Project-local interactive TUI tool. Run `/reload` to load it after adding the ex
 
 Each question displays choices in the given order, followed by **Other** for a written answer. Omit `choices` or pass `[]` for a free-response question. The user can press Tab on a question to open an inline notes box. All answers return after the form is submitted, in input order, as `{ questions: [{ question, choices, answer: { answer, choiceIndex?, notes } }] }`. Escape cancels the whole form (each answer is `null`). Concurrent calls still share a form, but the system-prompt guidelines direct the agent to group all questions that can be asked together into **one tool call**, provide three choices with a first-choice recommendation when applicable, and use no choices for free-form questions. The tool is marked interactive-only using the shared helper. It is hidden and has no prompt snippets/guidelines in headless, RPC, or worker sessions; execution is also guarded.
 
+While a goal is running, calls return `Can't ask questions in goal mode. Use your best judgement, or mark the goal as blocked if there is a genuine blocker.` without opening a form. Paused/blocked or completed goals do not prevent questions. The current session branch is checked on each call.
+
 Example:
 ```json
 {"questions":[{"question":"Which approach?","choices":["A (Recommended)","B","C"]},{"question":"Any constraints?"}]}

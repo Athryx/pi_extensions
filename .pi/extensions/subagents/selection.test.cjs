@@ -55,6 +55,26 @@ test('native selection includes idle agents, direct names skip picker, and main 
   assert.equal(f.calls.length, 3);
 });
 
+test('cycling wraps both ways through main and idle workers, following external restoration', async () => {
+  const f = await fixture();
+  assert.equal(await f.selection.cycle(f.workspace, -1, f.ctx), true);
+  assert.equal(f.source.title, 'idle');
+  await f.selection.cycle(f.workspace, 1, f.ctx);
+  assert.equal(f.source, undefined);
+  await f.selection.cycle(f.workspace, 1, f.ctx);
+  assert.equal(f.source.title, 'active');
+  await f.selection.cycle(f.workspace, 1, f.ctx);
+  assert.equal(f.source.title, 'idle');
+  f.api.setViewedSession(undefined); // Escape restores main through the UI.
+  await f.selection.cycle(f.workspace, 1, f.ctx);
+  assert.equal(f.source.title, 'active');
+  assert.equal(f.menus.length, 0);
+  f.service = undefined;
+  assert.equal(await f.selection.cycle(f.workspace, 1, f.ctx), false);
+  assert.equal(await f.selection.cycle(f.workspace, 1, {...f.ctx, mode: 'rpc'}), false);
+  f.selection.clear();
+});
+
 test('sources read current messages/session/settings/tool snapshots after idle resume', async () => {
   const f = await fixture(), record = f.workspace.get('idle');
   await f.selection.select(f.workspace, 'idle', f.ctx);
@@ -130,12 +150,13 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
     identity: {...identity, instanceId: 'worker', name: 'worker', template: 'subagent', role: 'worker', parentName: 'main'},
     template: {name: 'subagent', model: {name: 'parent', thinking: 'parent'}, tools: {include_defaults: true, extra: []}, skills: {include_defaults: true, extra_paths: []}, prompt: '', subagents: {allowed: []}, source: 'test'},
   });
-  const handlers = new Map(), commands = new Map(), tools = new Map(), sent = [], notices = [];
+  const handlers = new Map(), commands = new Map(), shortcuts = new Map(), tools = new Map(), sent = [], notices = [];
   let overlays = 0;
   const pi = {
     ...f.pi,
     on: (event, handler) => handlers.set(event, handler),
     registerCommand: (name, command) => commands.set(name, command),
+    registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
     registerTool: tool => tools.set(tool.name, tool),
     getAllTools: () => ['read', 'bash', 'edit', 'write'].map(name => ({name})).concat([...tools.values()]),
     getActiveTools: () => ['read', 'bash', 'edit', 'write'], setActiveTools() {},
@@ -143,12 +164,17 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
     sendMessage: (...args) => sent.push(args),
   };
   const ctx = {cwd: dir, mode: 'tui', hasUI: true, sessionManager: manager, isProjectTrusted: () => false, isIdle: () => true,
-    ui: {...f.ctx.ui, custom: async () => {overlays++;}, notify: (...args) => notices.push(args)},
+    ui: {...f.ctx.ui, setWidget() {}, custom: async () => {overlays++;}, notify: (...args) => notices.push(args)},
   };
   install(pi);
   try {
     await handlers.get('session_start')({reason: 'new'}, ctx);
-    const command = commands.get('agents');
+    assert.deepEqual([...shortcuts.keys()], ['alt+]', 'alt+[']);
+    await shortcuts.get('alt+]').handler(ctx);
+    assert.equal(f.source.title, 'worker');
+    await shortcuts.get('alt+[').handler(ctx);
+    assert.equal(f.source, undefined);
+    const command = commands.get('subagents');
     assert.ok(command.getArgumentCompletions('wo').some(item => item.value === 'worker'));
     await command.handler('worker', ctx);
     assert.equal(f.source.title, 'worker');

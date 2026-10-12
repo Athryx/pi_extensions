@@ -131,7 +131,7 @@ export class ViewedSessionController {
       const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       // These commands operate the display only. Never pass a worker-looking
       // prompt, shell command, /skill, or session mutation to main by accident.
-      if (bindings.matches(data, "tui.input.submit") && /^\/(?:agents|ui)(?:[ \t][^\r\n]*)?$/.test(text)) return;
+      if (bindings.matches(data, "tui.input.submit") && /^\/(?:subagents|ui)(?:[ \t][^\r\n]*)?$/.test(text)) return;
       if (!isKeyRepeat(data)) this.warn("Agent view is read-only. Press Escape to return to main before submitting.");
       return {consume: true};
     }

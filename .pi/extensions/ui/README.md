@@ -22,9 +22,9 @@ These are display-only adapters: arguments, results, message metadata, and model
 
 ## Read-only viewed sessions
 
-Other extensions can temporarily show another session in Pi's native transcript, without changing the active session, model context, main transcript, or prompt history. `/agents` uses this for worker views. Live assistant text, tool arguments, partial results, and nested calls update in place; stored/idle history can be displayed without starting an agent. Native worker tool renderers are used when its live session is available.
+Other extensions can temporarily show another session in Pi's native transcript, without changing the active session, model context, main transcript, or prompt history. `/subagents` uses this for worker views. Live assistant text, tool arguments, partial results, and nested calls update in place; stored/idle history can be displayed without starting an agent. Native worker tool renderers are used when its live session is available.
 
-The main editor stays focused, but ordinary submissions and model/session actions are blocked while viewing. **Escape** or **Ctrl+C** returns to the main transcript without clearing its draft or aborting its agent. **Ctrl+O**, **Ctrl+Alt+O**, `/ui`, and `/agents` remain available; dialogs keep their own controls. The viewed banner reports the current tool mode and warnings for blocked controls, without appending warnings to the main transcript. Held Kitty Escape/Ctrl+C repeat reports cannot clear or interrupt main after returning; a new key press resumes native behavior. Other footer/header widgets and main-session status remain attached to the main session, not the viewed worker. Viewing is not a session switch or a way to send prompts to a worker.
+The main editor stays focused, but ordinary submissions and model/session actions are blocked while viewing. **Escape** or **Ctrl+C** returns to the main transcript without clearing its draft or aborting its agent. **Alt+] / Alt+[** cycle workspace agent views via the subagents extension; its persistent row below the prompt highlights the viewed agent. **Ctrl+O**, **Ctrl+Alt+O**, `/ui`, and `/subagents` remain available; dialogs keep their own controls. The viewed banner reports the current tool mode and warnings for blocked controls, without appending warnings to the main transcript. Held Kitty Escape/Ctrl+C repeat reports cannot clear or interrupt main after returning; a new key press resumes native behavior. Other footer/header widgets and main-session status remain attached to the main session, not the viewed worker. Viewing is not a session switch or a way to send prompts to a worker.
 
 ### Extension API
 
@@ -64,7 +64,7 @@ Pi has no public transcript grouping/spacing API. `compact.ts` therefore wraps c
 
 The viewed-session adapter additionally recognizes the installed Pi layout: seven root containers (document, pending, status, widgets-above, editor, widgets-below, footer), with header/resources/chat inside the document. Only the document's chat child is swapped; the original main chat stays alive and is restored on exit, including in fullscreen's native scroll viewport. Unsupported layouts/non-TUI modes report `available: false` and reject a new source without mutating the tree. Consumers should keep their old overlay fallback when the service is absent or rejects the view. Alternate editors or future Pi layouts may need an adapter update.
 
-Tests against the installed Pi host (no paid or external model calls). The host smoke test initializes the real `InteractiveMode` and SDK runtime with an injected terminal and deterministic in-process worker provider; it covers `/agents demo`, live updates, read-only controls, and the production fullscreen switch:
+Tests against the installed Pi host (no paid or external model calls). The host smoke test initializes the real `InteractiveMode` and SDK runtime with an injected terminal and deterministic in-process worker provider; it covers `/subagents demo`, live updates, read-only controls, and the production fullscreen switch:
 
 ```sh
 node --test .pi/extensions/ui/*.test.cjs

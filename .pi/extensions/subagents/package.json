@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test.cjs runtime.test.cjs root.test.cjs main-template-lock.test.cjs ui.test.cjs selection.test.cjs",
+    "test": "node --test test.cjs runtime.test.cjs root.test.cjs main-template-lock.test.cjs ui.test.cjs selection.test.cjs agent-bar.test.cjs",
     "check": "node check-types.cjs"
   },
   "dependencies": {

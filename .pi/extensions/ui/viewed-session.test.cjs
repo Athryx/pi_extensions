@@ -652,7 +652,7 @@ test('view is read-only: ordinary submission and session/model actions are block
     assert.deepEqual(f.actions, [], 'return-to-main does not abort, clear, or cycle the main session');
     assert.deepEqual(f.editor.history, history, 'view exit does not save a cleared main draft');
     api.setViewedSession(live);
-    for (const allowed of ['/agents', '/ui compact']) {
+    for (const allowed of ['/subagents', '/ui compact']) {
       f.editor.setText(allowed);
       f.press('\r');
       assert.equal(f.submitted.at(-1), allowed);
