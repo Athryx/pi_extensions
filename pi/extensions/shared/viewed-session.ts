@@ -15,6 +15,8 @@ export interface ViewedSessionSnapshot {
 export interface ViewedSessionSource {
   id: string;
   title: string;
+  /** Display-only classification; never grants session control. Omitted means agent. */
+  kind?: "agent" | "group";
   getSnapshot(): ViewedSessionSnapshot;
   subscribe(listener: () => void): () => void;
 }

@@ -1,7 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { isInteractive, registerInteractiveTool, interactiveSection } from "../shared/interactive";
+import { isInteractive, registerInteractiveTool } from "../shared/interactive";
 
 const STATE_KEY = "project-goal-mode";
 const REMINDER_KEY = "project-goal-reminder";
@@ -95,7 +95,10 @@ export default function (pi: ExtensionAPI) {
       name: "set_goal_status", label: "Set Goal Status",
       executionMode: "sequential",
       description: "Update an existing goal. For completed or blocked, supply a reason explaining strong evidence for that status; never invent evidence. Use running only when the user asks to resume a blocked/interrupted goal. Completed clears the goal.",
-      promptGuidelines: ["Call set_goal_status(completed or blocked) only with strong evidence, included in reason. Call set_goal_status(running) only when the user asks to resume a blocked goal."],
+      promptGuidelines: [
+        "Call set_goal_status(completed or blocked) only with strong evidence, included in reason. Call set_goal_status(running) only when the user asks to resume a blocked/interrupted goal.",
+        "Do not declare a running goal finished without updating its status; if it is still running, keep working.",
+      ],
       parameters: Type.Object({
         status: StringEnum(["running", "completed", "blocked"] as const),
         reason: Type.Optional(Type.String({ description: "Explanation including evidence when completed or blocked" })),
@@ -132,10 +135,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => { registerTools(ctx); restore(ctx); });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
-
-  pi.on("before_agent_start", (event, ctx) => {
-    interactiveSection(event.systemPromptOptions.sections, "goal_mode", "Goal mode: Only call set_goal when the user explicitly asks to set a goal. Only call set_goal_status(completed/blocked) when you have strong evidence, and explain that evidence in the reason argument. Call set_goal_status(running) only if the user asks to resume an interrupted blocked goal. Do not declare a running goal finished without updating its status; if it is still running, keep working.", ctx);
-  });
 
   // A queued reminder may become stale if a user pauses, stops, or replaces the goal.
   // Remove it from LLM context even if Pi already queued the follow-up turn.

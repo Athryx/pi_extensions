@@ -1,4 +1,5 @@
 name: subagent
+description: Subagent with standard tools, cannot spawn it's own subagents
 selectable: true
 model:
   name: global

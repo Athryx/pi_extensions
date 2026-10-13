@@ -1,0 +1,36 @@
+
+ Run the directed demo workflow
+
+
+ workflow flow.js · running ⋯
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to
+ ~/.tmux.conf and restart tmux.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Workflow · main
+● Workflow · running
+└─ ● Repository overview · running · active: Research files
+   └─ ● Research files · running
+      └─ ● Research · running
+         ├─ ● Read architecture · running
+         │  └─ ● reader · reader-1 · running
+         └─ ● Read conventions · running
+            └─ ● reader · conventions-1 · running
+── ⠏ Working ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Root group · ● main (main)
+/tmp/pi-workflow-smoke-oU740t/project
+↑2 ↓3 0.0%/64k (auto)                                                                                     test

@@ -15,7 +15,7 @@ export default function(pi) {
  pi.registerProvider('workspace-smoke',{api:'workspace-smoke',apiKey:'fake-only',baseUrl:'http://unused.invalid',models:[{id:'test',name:'Smoke test',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32000,maxTokens:2000}],streamSimple(model,context,options){
   const stream=createAssistantMessageEventStream();
   void (async()=>{
-   const worker=getCurrentSystemPrompt(context.messages).includes('Instance: demo.');
+   const worker=getCurrentSystemPrompt(context.messages).includes('Name: demo.');
    const last=context.messages.at(-1);
    const lastText=typeof last.content==='string'?last.content:(last.content??[]).filter(b=>b.type==='text').map(b=>b.text).join(' ');
    const output={role:'assistant',api:model.api,provider:model.provider,model:model.id,timestamp:Date.now(),stopReason:'pending',content:[],usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};

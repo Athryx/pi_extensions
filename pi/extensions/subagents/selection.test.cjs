@@ -21,7 +21,7 @@ async function fixture() {
     getViewedSession: () => source && ({id: source.id, title: source.title}),
     onChange: listener => { changes.add(listener); return () => changes.delete(listener); },
   };
-  const pi = {events: {emit: (event, request) => {
+  const pi = {events: {on: () => () => {}, emit: (event, request) => {
     assert.equal(event, VIEWED_SESSION_REQUEST);
     if (f.service) request.reply(f.service);
   }}};
@@ -150,10 +150,14 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
     identity: {...identity, instanceId: 'worker', name: 'worker', template: 'subagent', role: 'worker', parentName: 'main'},
     template: {name: 'subagent', model: {name: 'parent', thinking: 'parent'}, tools: {include_defaults: true, extra: []}, skills: {include_defaults: true, extra_paths: []}, prompt: '', subagents: {allowed: []}, source: 'test'},
   });
-  const handlers = new Map(), commands = new Map(), shortcuts = new Map(), tools = new Map(), sent = [], notices = [];
+  const handlers = new Map(), commands = new Map(), shortcuts = new Map(), tools = new Map(), sent = [], notices = [], eventHandlers = new Map();
   let overlays = 0;
   const pi = {
     ...f.pi,
+    events: {
+      on: (event, handler) => {eventHandlers.set(event, handler); return () => eventHandlers.delete(event);},
+      emit: (event, request) => eventHandlers.has(event) ? eventHandlers.get(event)(request) : f.pi.events.emit(event, request),
+    },
     on: (event, handler) => handlers.set(event, handler),
     registerCommand: (name, command) => commands.set(name, command),
     registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
@@ -179,6 +183,28 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
     await command.handler('worker', ctx);
     assert.equal(f.source.title, 'worker');
     assert.equal(overlays, 0);
+    const {requestWorkflowAgentsAPI} = await load('../shared/workflow-agents.ts');
+    const capability = requestWorkflowAgentsAPI(pi);
+    assert.equal(capability.version, 1);
+    const run = capability.openRun({sourcePath: join(dir, 'demo.js'), signal: new AbortController().signal});
+    const groupCommand = commands.get('groups');
+    const groupItems = groupCommand.getArgumentCompletions('');
+    assert.ok(groupItems.some(item => item.value === 'root'));
+    const workflowGroup = groupItems.find(item => /Workflow: demo/.test(item.label));
+    assert.ok(workflowGroup);
+    await groupCommand.handler(workflowGroup.value, ctx);
+    assert.match(f.source.getSnapshot().messages[0].content, /No agents/);
+    assert.deepEqual(command.getArgumentCompletions(''), []);
+    await assert.rejects(command.handler('worker', ctx), /\/groups/);
+    await groupCommand.handler('root', ctx);
+    assert.equal(f.source.title, 'worker'); // Root group remembers its last member.
+    await command.handler('main', ctx);
+    assert.equal(f.source, undefined);
+    assert.ok(command.getArgumentCompletions('wo').some(item => item.value === 'worker'));
+    await groupCommand.handler('', {...ctx, mode: 'json', hasUI: false});
+    assert.equal(sent.at(-1)[0].customType, 'subagents.groups.v1');
+    assert.match(sent.at(-1)[0].content, /Workflow: demo/);
+    await run.close();
     await handlers.get('session_start')({reason: 'reload'}, ctx);
     assert.equal(f.source, undefined);
     await command.handler('worker', ctx);

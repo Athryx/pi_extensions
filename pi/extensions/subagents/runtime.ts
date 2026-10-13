@@ -7,6 +7,7 @@ import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-codi
 import { loadout, checkTools, promptIdentity, PI_DEFAULT_TOOLS } from "./loadout";
 import { isInteractiveTool } from "../shared/interactive";
 import { registerTools } from "./tools";
+import { registerWorkflowAgents } from "./workflow-agents";
 import type { AgentRecord } from "./types";
 import type { Workspace } from "./workspace";
 export const MAIN_ONLY = new Set(["subagents", "context", "ui", "codex-usage"]);
@@ -25,16 +26,19 @@ export async function syncModelAccess(runtime: ModelRuntime, record: AgentRecord
   if (auth.apiKey && !ctx.modelRegistry.isUsingOAuth(model)) await runtime.setRuntimeApiKey(model.provider, auth.apiKey);
 }
 export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx: ExtensionContext): Promise<void> {
+  const startupSignal = AbortSignal.any([workspace.signal.signal, record.taskController?.signal ?? workspace.signal.signal]);
+  startupSignal.throwIfAborted();
   const settings = SettingsManager.create(workspace.cwd, workspace.agentDir);
   settings.setProjectTrusted(workspace.trusted);
   await settings.reload();
   const paths = await new DefaultPackageManager({cwd: workspace.cwd, agentDir: workspace.agentDir, settingsManager: settings}).resolve(() => Promise.resolve("skip"));
   const extensions = paths.extensions.filter(p => p.enabled && !excluded(p.path, workspace.config.worker_exclude_extensions)).map(p => p.path);
-  const allowed = new Set(loadout(record.template, settings.getDefaultTools() ?? PI_DEFAULT_TOOLS));
+  const allowed = new Set(loadout(record.template, settings.getDefaultTools() ?? PI_DEFAULT_TOOLS, record.identity));
   const factory: ExtensionFactory = pi => {
-    registerTools(pi, () => workspace, record.identity.name, !!record.template.subagents.allowed.length);
+    registerTools(pi, () => workspace, record.identity.name, !!record.template.subagents.allowed.length, record.identity);
+    registerWorkflowAgents(pi, () => workspace, record.identity.name);
     pi.on("before_agent_start", event => {
-      Object.assign(event.systemPromptOptions.sections, promptIdentity(record.identity, record.template));
+      Object.assign(event.systemPromptOptions.sections, promptIdentity(record.identity, record.template, name => workspace.resolveTemplate(record, name)));
     });
     pi.on("tool_call", event => {
       if (!allowed.has(event.toolName)) return {block: true, reason: "Tool not permitted by agent template: " + event.toolName};
@@ -69,7 +73,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
       return base;
     },
   });
-  await loader.reload();
+  await loader.reload(); startupSignal.throwIfAborted();
   const errors = loader.getExtensions().errors;
   if (errors.length) throw new Error(errors.map(e => e.path + ": " + e.error).join("\n"));
   const runtime = await ModelRuntime.create({authPath: resolve(workspace.agentDir, "auth.json"), modelsPath: resolve(workspace.agentDir, "models.json"), signal: workspace.signal.signal});
@@ -94,10 +98,10 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
     const requiredMcp = [...allowed].filter(name => name.startsWith("mcp__"));
     const deadline = Date.now() + 10000;
     while (requiredMcp.some(name => !session.getAllTools().some(t => t.name === name)) && Date.now() < deadline) {
-      workspace.signal.signal.throwIfAborted();
+      startupSignal.throwIfAborted();
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    workspace.signal.signal.throwIfAborted();
+    startupSignal.throwIfAborted();
     const names = new Set(session.getAllTools().map(t => t.name));
     for (const name of allowed) if (!names.has(name)) throw new Error("Unknown/unavailable tool: " + name);
     session.setActiveToolsByName([...allowed]);

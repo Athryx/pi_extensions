@@ -68,5 +68,28 @@ test('subagents extension loads with the installed host and exposes viewer/templ
   assert.equal(extensions.length, 1);
   assert.ok(extensions[0].commands.has('agent'));
   assert.ok(extensions[0].commands.has('subagents'));
+  assert.ok(extensions[0].commands.has('groups'));
   assert.ok(extensions[0].handlers.has('session_shutdown'));
+});
+
+test('workflow loads against the installed host with strict directed-only orchestration', async () => {
+  const {loadExtensions} = await host('dist/core/extensions/loader.js');
+  const {validateToolArguments} = await host('node_modules/@earendil-works/pi-ai/dist/utils/validation.js');
+  const {extensions, errors} = await loadExtensions([join(cwd, 'pi/extensions/workflow/index.ts')], cwd);
+  assert.deepEqual(errors, []);
+  const tool = extensions[0].tools.get('workflow').definition;
+  assert.equal(tool.exposure, 'model-only');
+  assert.equal(tool.executionMode, 'sequential');
+  assert.match(tool.promptGuidelines.join('\n'), /unless directed/i);
+  const args = validateToolArguments(tool, {name: 'workflow', arguments: {path: 'example.js'}});
+  assert.equal(args.path, 'example.js');
+  assert.throws(() => validateToolArguments(tool, {name: 'workflow', arguments: {path: 'example.js', group: 'root'}}), /Validation failed/);
+});
+
+test('dynamic-workflows skill is discoverable through the public skill loader', async () => {
+  const {loadSkills} = await host('dist/index.js');
+  const result = loadSkills({cwd, agentDir: '/nonexistent/pi-workflow-skill-test', includeDefaults: false, skillPaths: [join(cwd, 'skills/dynamic-workflows')]});
+  assert.equal(result.skills.length, 1);
+  assert.equal(result.skills[0].name, 'dynamic-workflows');
+  assert.deepEqual(result.diagnostics, []);
 });

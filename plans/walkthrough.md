@@ -1,4 +1,112 @@
-# Subagents walkthrough
+# Subagents and dynamic workflows walkthrough
+
+## Dynamic workflows and agent groups
+
+Implemented the [approved design](DYNAMIC_WORKFLOWS.md) for Pi 1.1.0.
+
+### Updated depth limits
+
+Following the user's clarification, `max_depth` now limits agent nesting within each group (roots at 0), and new `max_group_depth` limits nested agent groups (workspace root at 0). Both default to 4; workflow containers and composition nodes do not add depth. `max_running` remains workspace-wide. `pi/subagents.json`, extension docs and the usage skill reflect this policy.
+
+Old cross-group depth snapshots are validated and migrated in memory without rewriting saved branches. New depth snapshots have an explicit group-scope marker. Both caps are rechecked before starting queued or asynchronously initialized agents. Automated regressions cover local reset/enforcement, group limits including zero, configuration trust/validation, old/new/mixed restoration, malformed ownership, and rollback after setup-time limit changes. Independent review verified the boundary and restoration cases. The terminal captures below are retained from the earlier workflow UI validation; this depth-only update was verified with deterministic automated tests.
+
+### Changes
+
+- Added [`pi/extensions/workflow/`](../pi/extensions/workflow/README.md): a strict path-only `workflow` tool using codemode's public QuickJS sandbox, not Node execution. Its guidance is **“Do not use workflow unless directed.”**
+- Added YAML-equivalent `workflow.register_agents(...)`, awaitable `workflow.agent(prompt, template, optionalName)`, functions-first `sequence`/`parallel`, and scoped `set_status`. Local definitions need no ordinary child-template permission; existing YAML templates still do.
+- Added workspace-coordinated **agent groups**. Every workflow invocation creates a container group; every workflow agent gets a separate group with a headless worker root and no messaging parent. Ordinary children remain in their creator's group. Listing and messaging never cross groups, including ancestors/descendants.
+- Preserved workspace-wide worker capacity, added independent per-group agent and agent-group nesting limits, FIFO launch scheduling and durable template/group provenance, and made malformed new-format restoration fail closed. Restored unfinished groups are marked cancelled in memory without rewriting branch history.
+- Added `/groups`, group-local `/subagents`, cycling and bottom bars, plus read-only empty-group overviews and fallback overlays without dummy agent sessions. Native display-only commands remain usable while viewing; real selector dialogs retain their input ownership.
+- Added fail-fast scoped cancellation with awaited descendant cleanup, including children of already-settled agents and same-group message-driven root continuations. Explicit private run provenance keeps those continuations owned without cancelling unrelated newer work. Caught failures can run parent-scope fallbacks only after cleanup. Late continuation/descendant usage is included once; partial output survives cancellation.
+- Retained codemode output/discovery/store/model facilities through a small compatibility adapter. Workflow progress shows fan-out and active/previous sequence stages. New render caches cover reuse and content, size, theme and view invalidation; unrelated existing UI/cache work was left intact.
+- Added the [`dynamic-workflows` skill and runnable example](../skills/dynamic-workflows/SKILL.md), extension documentation, and `+workflow` in `pi/settings.json`.
+
+### Verification
+
+```sh
+npm --prefix pi/extensions/workflow test
+npm --prefix pi/extensions/workflow run check
+npm --prefix pi/extensions/subagents test
+npm --prefix pi/extensions/subagents run check
+node --test pi/extensions/*/test.cjs pi/extensions/*/*.test.cjs tests/*.cjs
+git diff --check
+```
+
+Final results:
+
+| Check | Result |
+| --- | --- |
+| Workflow extension | **32/32 passed** |
+| Subagents extension | **77/77 passed** |
+| Repository suite | **212/212 passed**, no failures/cancellations/skips |
+| Both strict TypeScript checks | **Passed** |
+| Diff whitespace check | **Passed** |
+
+All model testing used local fake providers; **no paid model calls** were made. Tests use real installed SDK sessions and QuickJS where applicable. Coverage includes normal and `codemode.only` operation, leaf-root tool hiding, isolated persistent groups, private final responses, exact usage, local registry snapshots, name reservations, queue/depth limits, nested ownership, strict schemas, callback validation including sparse arrays, cancellation/timeout/fallbacks, compaction-aware completion, restore, codemode parity, output/store/model facilities, lifecycle cleanup, and UI cache regressions.
+
+Independent review reproduced and verified fixes for name collisions, abort-time partial-output loss, post-settlement descendant cancellation/late usage, same-group auto-resumed root/child ownership and usage, older-task cancellation affecting unrelated newer waiters, and sparse callback validation. Real TUI testing additionally found and fixed native selector ownership and incomplete empty-overlay coverage.
+
+### Genuine terminal evidence
+
+Ran `tests/dynamic-workflows-smoke.cjs` in disposable real-Pi sessions inside a dedicated tmux server (110×36), with a local synthetic streaming provider. The default fixture loads native viewed-session UI; `--fallback` omits it. Verified live progress, `/groups`, the empty container, isolated worker transcripts, group-local `/subagents`, single-member cycling, returning to main, reload, and fallback overview coverage.
+
+The following images are **SVG renderings of unmodified text captured from those real tmux panes**, not mockups or terminal-pixel screenshots. Font/colors are presentation; the original text is retained beside each image. The worker content is intentionally synthetic.
+
+#### Live sequence and parallel fan-out
+
+![Real workflow progress capture](artifacts/workflow-progress.svg)
+
+[Raw capture](artifacts/workflow-progress.txt). The bottom bar contains only `Root group · main` while two isolated workers run.
+
+#### Group hierarchy
+
+![Real group picker capture](artifacts/workflow-groups.svg)
+
+[Raw capture](artifacts/workflow-groups.txt).
+
+#### Empty workflow container
+
+![Real empty workflow group capture](artifacts/workflow-container.svg)
+
+[Raw capture](artifacts/workflow-container.txt). This is a display-only overview, not a fabricated agent/session.
+
+#### Isolated transcript and local agent picker
+
+![Real isolated worker capture](artifacts/workflow-isolated-agent.svg)
+
+[Raw capture](artifacts/workflow-isolated-agent.txt).
+
+![Real group-local agent picker capture](artifacts/workflow-agent-picker.svg)
+
+[Raw capture](artifacts/workflow-agent-picker.txt). No main or sibling-group agents appear.
+
+#### Return to main and fallback
+
+![Real restored main capture](artifacts/workflow-return-main.svg)
+
+[Raw capture](artifacts/workflow-return-main.txt).
+
+![Real fallback empty-group capture](artifacts/workflow-fallback.svg)
+
+[Raw capture](artifacts/workflow-fallback.txt). The fallback fully covers unrelated main history; Escape exits it before entering another command.
+
+The disposable Pi/tmux sessions were shut down after capture.
+
+### Limitations
+
+- Group/tool policy is not an OS sandbox: agents and trusted extensions share filesystem permissions and cwd. Already-completed file/tool side effects are not rolled back by cancellation.
+- Crash recovery is not a cross-file exactly-once transaction. In-flight work is not resumed automatically; missing/corrupt new group provenance fails closed.
+- Arbitrary pure JavaScript promises cannot be cooperatively stopped. Fail-fast waits for owned **host work** cleanup, not a forever-pending callback; cancelled facades reject further calls and final VM teardown ends execution.
+- Shared-group workflow launches remain deliberately deferred. The workflow capability requires an active subagents workspace; direct recursive workflow calls are excluded from the script's tool catalog.
+- Real paid/OAuth providers, live remote MCP/non-LLM model transports, provider-specific recovery, regular-mode visual terminal behavior, and non-Linux platforms were not end-to-end validated. Relevant host/adapter behaviors use local deterministic fixtures.
+
+Run `/reload` to load the implementation. Invoke the workflow tool only when directed; `/groups` and `/subagents` are human, read-only navigation commands.
+
+---
+
+## Earlier subagents implementation (historical)
+
+The record below describes the earlier implementation and its then-current paths/commands/test counts. Current extensions are under `pi/extensions`; `/agents` was subsequently renamed `/subagents`, and native viewing is now preferred over the fallback overlay.
 
 ## Changes made
 

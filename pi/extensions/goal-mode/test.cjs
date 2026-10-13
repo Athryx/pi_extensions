@@ -113,27 +113,29 @@ test('repeated reminders only after normal no-tool final and no queued input', a
   turn(h); assert.equal(h.sends.length, 2);
 });
 
-test('busy interactive command queues kickoff and preserves prompt sections', async () => {
+test('busy interactive command queues kickoff and goal rules live in tool guidance', async () => {
   const h = harness(await load());
   h.idle(false);
   await h.commands.goal.handler('investigate', h.ctx);
   assert.deepEqual(h.sends[0].options, { deliverAs: 'followUp' });
   assert.ok(h.tools.set_goal_status && h.tools.set_goal);
-  const event = { systemPrompt: 'Base', systemPromptOptions: { sections: { existing: 'Preserved' } } };
-  assert.equal(h.events.before_agent_start(event, h.ctx), undefined);
-  assert.equal(event.systemPrompt, 'Base');
-  assert.equal(event.systemPromptOptions.sections.existing, 'Preserved');
-  assert.match(event.systemPromptOptions.sections.goal_mode, /Only call set_goal/);
+  assert.equal(h.events.before_agent_start, undefined);
+  assert.match(h.tools.set_goal.promptGuidelines.join('\n'), /only when the user explicitly asks/);
+  const guidance = h.tools.set_goal_status.promptGuidelines.join('\n');
+  assert.match(guidance, /only with strong evidence, included in reason/);
+  assert.match(guidance, /only when the user asks to resume/);
+  assert.match(guidance, /Do not declare a running goal finished without updating its status/);
+  assert.match(guidance, /if it is still running, keep working/);
 });
 
 test('explicit worker identities suppress goal prompts, tools and reminders', async () => {
   const saved = [{type: 'custom', customType: 'subagents.identity.v1', data: {role: 'worker'}}];
   const h = harness(await load(), {saved, ui: true});
-  const event = {systemPromptOptions: {sections: {}}};
-  h.events.before_agent_start(event, h.ctx);
-  assert.equal(event.systemPromptOptions.sections.goal_mode, undefined);
-  assert.equal(h.tools.set_goal.exposure, 'hidden');
-  assert.equal(h.tools.set_goal.promptGuidelines, undefined);
+  assert.equal(h.events.before_agent_start, undefined);
+  for (const tool of Object.values(h.tools)) {
+    assert.equal(tool.exposure, 'hidden');
+    assert.equal(tool.promptGuidelines, undefined);
+  }
   await assert.rejects(call(h, 'set_goal', {goal: 'should not run'}), /interactive agent/);
   turn(h); assert.equal(h.sends.length, 0);
 });

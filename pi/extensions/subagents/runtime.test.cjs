@@ -39,12 +39,24 @@ async function fixture({factory, disk=false, respond}={}) {
   const templates=new Map(['main','subagent','leader'].map(n=>[n,parseTemplate('name: '+n+'\n'+(n==='subagent'?'':'subagents: {allowed: [subagent, leader], default: subagent}'),join(dir,n+'.yaml'))]));
   const ctx={cwd:join(dir,'project'),sessionManager:manager,modelRegistry:registry,model,thinkingLevel:'high',isIdle:()=>false,isProjectTrusted:()=>true};
   const received=[];
-  const options={cwd:ctx.cwd,agentDir:join(dir,'agent'),trusted:true,config:{agent_paths:[],max_running:8,max_depth:4,worker_exclude_extensions:[]},templates,identity,context:ctx,global:{model,thinking:'high'},append:(k,d)=>manager.appendCustomEntry(k,d),rootSend:(e)=>{received.push(e);manager.appendCustomMessageEntry('subagents.message.v1','Message from '+e.from+':\n'+e.message,true,e);manager.appendCustomEntry('subagents.delivery.v1',{envelope:e,delivered:true});},workerFactory:factory};
+  const options={cwd:ctx.cwd,agentDir:join(dir,'agent'),trusted:true,config:{agent_paths:[],max_running:8,max_depth:4,max_group_depth:4,worker_exclude_extensions:[]},templates,identity,context:ctx,global:{model,thinking:'high'},append:(k,d)=>manager.appendCustomEntry(k,d),rootSend:(e)=>{received.push(e);manager.appendCustomMessageEntry('subagents.message.v1','Message from '+e.from+':\n'+e.message,true,e);manager.appendCustomEntry('subagents.delivery.v1',{envelope:e,delivered:true});},workerFactory:factory};
   const previousAgentDir=process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR=options.agentDir;
   const workspace=new Workspace(options);
   return {workspace,options,templates,dir,ctx,manager,received,requests,sdk,ai,runtime,setGate:g=>gate=g,cleanup:async()=>{await workspace.close(); previousAgentDir===undefined?delete process.env.PI_CODING_AGENT_DIR:process.env.PI_CODING_AGENT_DIR=previousAgentDir; await rm(dir,{recursive:true,force:true});}};
 }
+test('spawning workers receive allowed child descriptions in the actual request', async()=>{
+  const f=await fixture();
+  try {
+    f.templates.get('subagent').description='Handles delegated tasks';
+    f.templates.get('leader').description='Coordinates helpers';
+    await f.workspace.create('main','coordinator','inspect catalog','leader');
+    await until(()=>f.requests.length && !f.workspace.get('coordinator').busy);
+    const prompt=f.ai.getCurrentSystemPrompt(f.requests[0].messages);
+    assert.match(prompt,/Allowed child templates:\n- subagent — Handles delegated tasks\n- leader — Coordinates helpers/);
+  } finally {await f.cleanup();}
+});
+
 test('real SDK worker lifecycle, separate files, filtered extensions, resume and restore', async()=>{
   const f=await fixture({disk:true});
   let release; f.setGate(new Promise(r=>release=r));
@@ -63,7 +75,7 @@ test('real SDK worker lifecycle, separate files, filtered extensions, resume and
     release(); f.setGate(undefined);
     await until(()=>f.received.length===1 && !record.busy);
     assert.equal(record.status,'idle'); assert.equal(f.received[0].from,'alice'); assert.equal(f.received[0].message,'worker answer');
-    assert.match(f.ai.getCurrentSystemPrompt(f.requests[0].messages),/Instance: alice.*Parent: main/);
+    assert.match(f.ai.getCurrentSystemPrompt(f.requests[0].messages),/Name: alice.*Parent: main/);
     const file=record.sessionFile;
     await f.workspace.send('main','alice','follow-up');
     await until(()=>f.received.length===2 && !record.busy);

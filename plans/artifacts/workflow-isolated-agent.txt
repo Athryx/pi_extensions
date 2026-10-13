@@ -1,0 +1,36 @@
+ Agent: reader-1 · read-only · tools: compact · Esc returns to main · footer/runtime: main
+
+
+
+ Workspace initialized for reader-1. Parent: none (non-interactive group root). Await your assigned task.
+
+
+
+ Produce synthetic architecture notes.
+
+
+ Isolated synthetic worker
+
+ No messaging parent; read-only viewer.
+ Synthetic step 1/6 completed.
+ Synthetic step 2/6 completed.
+ Synthetic step 3/6 completed.
+ Synthetic step 4/6 completed.
+ Synthetic step 5/6 completed.
+ Synthetic step 6/6 completed.
+ Final synthetic response.
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Agent: reader-1 · ● reader-1 (reader)
+/tmp/pi-workflow-smoke-oU740t/project
+↑10 ↓15 0.0%/64k (auto)                                                                                   test
+Viewing reader-1 (read-only; main runtime)

@@ -5,6 +5,7 @@ import { highlightCompactCode } from "./syntax-highlight.js";
 import { emphasize } from "./emphasis.js";
 import { customToolSummary, isQuestionTool, renderCustomTool, renderAgentMessage } from "./custom-tools";
 import type { AgentMessageInput } from "./custom-tools";
+import { messageKey, sameKey, themeKey, toolKey, type RenderCache } from "./render-cache.js";
 
 // Pi exposes renderers, but no transcript-layout hook. Keep the only internal
 // dependency here: runtime fields on ToolExecutionComponent and known workspace
@@ -32,6 +33,13 @@ interface GroupPosition {
   grouped: boolean;
   first: boolean;
 }
+interface GroupCache { key: unknown[]; positions: Map<ToolRow, GroupPosition> }
+interface NestedRows {
+  children: ToolRow[];
+  entries: Map<string, { row: ToolRow; preview?: string; parsed: boolean; args?: unknown }>;
+}
+type NestedCall = { name: string; args: unknown; result?: ToolRow["result"]; running: boolean };
+const NESTED_FAILURE = Object.freeze({ isError: true });
 
 function isToolRow(component: Component): component is ToolRow {
   const row = component as Partial<ToolRow>;
@@ -152,12 +160,16 @@ export function toolSummary(name: string, input: unknown, cwd?: string, result?:
 
 /** Instance-local, reversible adapter; native rendering remains untouched off-mode. */
 export class CompactView {
-  private originals = new Map<Component, { render: Component["render"]; mouse: Component["handleMouse"]; ownRender: boolean; ownMouse: boolean }>();
+  private originals = new Map<Component, { render: Component["render"]; mouse: Component["handleMouse"]; invalidate: Component["invalidate"]; ownRender: boolean; ownMouse: boolean; ownInvalidate: boolean; wrappedInvalidate: boolean }>();
   private positions = new WeakMap<ToolRow, GroupPosition>();
-  private syntaxCache = new WeakMap<ToolRow, { language: "bash" | "javascript"; command: string; colors: Theme["colors"]; mode: ReturnType<Theme["getColorMode"]>; text: string }>();
+  private groupCache = new WeakMap<Component[], GroupCache>();
+  private rowCache = new WeakMap<ToolRow, RenderCache>();
+  private messageCache = new WeakMap<AgentMessageRow, RenderCache>();
+  private nestedRows = new WeakMap<ToolRow, NestedRows>();
+  private syntaxCache = new WeakMap<ToolRow, { language: "bash" | "javascript"; command: string; theme: unknown[]; text: string }>();
   private disposed = false;
   public showCode = false;
-  public nestedCalls = new Map<string, { name: string; args: unknown; result?: ToolRow["result"]; running: boolean }>();
+  public nestedCalls = new Map<string, NestedCall>();
 
   constructor(private tui: TUI, private getTheme: () => Theme, public enabled = true) {
     // Do not patch the TUI proxy itself: Pi can swap the underlying renderer.
@@ -168,11 +180,14 @@ export class CompactView {
     if (this.disposed || this.originals.has(component)) return;
     if (!isToolRow(component) && !isAgentMessage(component) && !isBranch(component)) return;
     const original = {
-      render: component.render, mouse: component.handleMouse,
+      render: component.render, mouse: component.handleMouse, invalidate: component.invalidate,
       ownRender: Object.hasOwn(component, "render"), ownMouse: Object.hasOwn(component, "handleMouse"),
+      ownInvalidate: Object.hasOwn(component, "invalidate"),
+      wrappedInvalidate: isToolRow(component) || isAgentMessage(component),
     };
     this.originals.set(component, original);
     if (isToolRow(component)) {
+      component.invalidate = () => { this.rowCache.delete(component); original.invalidate.call(component); };
       component.render = width => this.enabled ? this.renderRow(component, width) : original.render.call(component, width);
       // Let compact text participate in terminal selection, not the native box's
       // stale mouse geometry. Ctrl+O still controls expansion in the normal view.
@@ -180,11 +195,18 @@ export class CompactView {
       return;
     }
     if (isAgentMessage(component)) {
+      component.invalidate = () => { this.messageCache.delete(component); original.invalidate.call(component); };
       component.render = width => {
         if (!this.enabled) return original.render.call(component, width);
         if (width <= 0) return [];
-        const lines = renderAgentMessage(component.message, this.getTheme(), width, component.outputPad);
-        return lines ? ["", ...lines] : original.render.call(component, width);
+        const theme = this.getTheme();
+        const key = [width, ...themeKey(theme), component.outputPad, ...messageKey(component.message)];
+        const cached = this.messageCache.get(component);
+        if (sameKey(cached?.key, key)) return cached!.lines;
+        const body = renderAgentMessage(component.message, theme, width, component.outputPad);
+        const lines = body ? ["", ...body] : original.render.call(component, width);
+        this.messageCache.set(component, { key, lines });
+        return lines;
       };
       component.handleMouse = event => this.enabled ? undefined : original.mouse?.call(component, event);
       return;
@@ -200,10 +222,32 @@ export class CompactView {
   }
 
   private groupRows(children: Component[], width: number): void {
+    // Visibility, not just child identity, can change while assistant text streams.
+    const key: unknown[] = [width];
+    let pending = false;
+    for (const child of children) {
+      key.push(child);
+      if (isToolRow(child)) {
+        key.push(child.toolName);
+        pending = isFileTool(child.toolName) || isQuestionTool(child.toolName);
+      } else if (pending) {
+        const visible = isAgentMessage(child) || child.render(width).length > 0;
+        key.push(visible);
+        if (visible) pending = false;
+      }
+    }
+    const cached = this.groupCache.get(children);
+    if (sameKey(cached?.key, key)) {
+      // A branch can restore an older child array after the same rows were
+      // grouped differently elsewhere (tree/view changes).
+      for (const [row, position] of cached!.positions) this.positions.set(row, position);
+      return;
+    }
+    const positions = new Map<ToolRow, GroupPosition>();
     let run: ToolRow[] = [];
     let kind: string | undefined;
     const finish = () => {
-      run.forEach((row, index) => this.positions.set(row, { grouped: run.length > 1, first: index === 0 }));
+      run.forEach((row, index) => positions.set(row, { grouped: run.length > 1, first: index === 0 }));
       run = []; kind = undefined;
     };
     for (const child of children) {
@@ -211,7 +255,7 @@ export class CompactView {
         const nextKind = isFileTool(child.toolName) ? child.toolName : isQuestionTool(child.toolName) ? "questions" : undefined;
         if (!nextKind) {
           finish();
-          this.positions.set(child, { grouped: false, first: true });
+          positions.set(child, { grouped: false, first: true });
         } else {
           if (run.length && kind !== nextKind) finish();
           kind = nextKind; run.push(child);
@@ -223,30 +267,94 @@ export class CompactView {
       }
     }
     finish();
+    for (const [row, position] of positions) this.positions.set(row, position);
+    this.groupCache.set(children, { key, positions });
+  }
+
+  private syncNestedRows(parent: ToolRow): ToolRow[] {
+    let state = this.nestedRows.get(parent);
+    if (!state) { state = { children: [], entries: new Map() }; this.nestedRows.set(parent, state); }
+    const details = parent.result?.details as { calls?: { id?: string; name: string; args?: string; status?: string }[] } | undefined;
+    const calls = Array.isArray(details?.calls) ? details.calls : [];
+    let liveCalls: NestedCall[] | undefined;
+    const seen = new Set<string>();
+    state.children.length = 0;
+    for (const call of calls) {
+      if (typeof call?.name !== "string") continue;
+      const index = state.children.length;
+      const id = call.id ?? `${parent.toolCallId}/preview-${index}`;
+      const key = `${index}:${id}`;
+      let entry = state.entries.get(key);
+      if (!entry) {
+        entry = { parsed: false, row: {
+          toolName: call.name, toolCallId: id, args: undefined, executionStarted: true, isPartial: false,
+          setExpanded() {}, render: () => [], invalidate() {},
+        } };
+        state.entries.set(key, entry);
+      }
+      seen.add(key);
+      let live = call.id ? this.nestedCalls.get(call.id) : undefined;
+      if (!live && call.id?.endsWith("/?")) {
+        // Only unresolved previews need the ordered fallback; ordinary frames
+        // must not scan every session's nested call for each parent.
+        liveCalls ??= [...this.nestedCalls.entries()].filter(([id]) => id.startsWith(`${parent.toolCallId}/`)).map(([, call]) => call);
+        if (liveCalls[index]?.name === call.name) live = liveCalls[index];
+      }
+      if (!live && (!entry.parsed || entry.preview !== call.args)) {
+        entry.preview = call.args; entry.parsed = true;
+        try { entry.args = JSON.parse(call.args ?? "{}"); } catch { entry.args = { title: call.args ?? "" }; }
+      }
+      Object.assign(entry.row, {
+        toolName: live?.name ?? call.name, toolCallId: id,
+        args: live ? live.args : entry.args, cwd: parent.cwd, outputPad: 0,
+        isPartial: live?.running ?? call.status === "running",
+        result: live?.result ?? (call.status === "error" || call.status === "cancelled" ? NESTED_FAILURE : undefined),
+      });
+      state.children.push(entry.row);
+    }
+    for (const key of state.entries.keys()) if (!seen.has(key)) state.entries.delete(key);
+    return state.children;
   }
 
   private renderRow(row: ToolRow, width: number): string[] {
     if (width <= 0) return [];
     const theme = this.getTheme();
     const position = this.positions.get(row) ?? { grouped: false, first: true };
+    const nested: string[][] = [];
+    if (toolLabel(row.toolName) === "codemode") {
+      const children = this.syncNestedRows(row);
+      const childWidth = Math.max(1, width - Math.max(0, Math.min(3, row.outputPad ?? 1)) - 2);
+      this.groupRows(children, childWidth);
+      for (const child of children) nested.push(this.renderRow(child, childWidth));
+    }
+    const key = [width, ...themeKey(theme), this.showCode, row.cwd, row.toolCallId,
+      position.grouped, position.first, ...toolKey({ name: row.toolName, args: row.args, result: row.result,
+        isPartial: row.isPartial, executionStarted: row.executionStarted, outputPad: row.outputPad }, this.showCode), ...nested];
+    const cached = this.rowCache.get(row);
+    if (sameKey(cached?.key, key)) return cached!.lines;
+    const lines = this.layoutRow(row, width, theme, position, nested);
+    this.rowCache.set(row, { key, lines });
+    return lines;
+  }
+
+  private layoutRow(row: ToolRow, width: number, theme: Theme, position: GroupPosition, nested: string[][]): string[] {
     const label = toolLabel(row.toolName);
     const custom = renderCustomTool({name: row.toolName, args: row.args, result: row.result,
       isPartial: row.isPartial, executionStarted: row.executionStarted, outputPad: row.outputPad}, theme, width,
       {heading: !position.grouped || position.first});
     if (custom !== undefined) return [...(position.first ? [""] : []), ...custom];
     const title = theme.fg("mdLink", theme.bold(label === "bash" || label === "powershell" ? "$" : oneLine(label)));
-    let summary = isFileTool(row.toolName)
+    let summary = label === "codemode" && !this.showCode ? "" : isFileTool(row.toolName)
       ? styleFileSummary(row.toolName, row.args, row.cwd, row.result, theme)
       : theme.fg("muted", toolSummary(row.toolName, row.args, row.cwd, row.result));
     const args = row.args && typeof row.args === "object" ? row.args as Record<string, unknown> : {};
     const command = label === "codemode" ? (typeof row.args === "string" ? row.args : args.code) : args.command;
     const language = label === "codemode" ? "javascript" : "bash";
-    if ((label === "bash" || label === "codemode") && typeof command === "string" && command.trim()) {
-      const colors = theme.colors;
-      const mode = theme.getColorMode();
+    if ((label === "bash" || (label === "codemode" && this.showCode)) && typeof command === "string" && command.trim()) {
+      const key = themeKey(theme);
       let cached = this.syntaxCache.get(row);
-      if (!cached || cached.language !== language || cached.command !== command || cached.colors !== colors || cached.mode !== mode) {
-        cached = { language, command, colors, mode, text: highlightCompactCode(command, language, theme) };
+      if (!cached || cached.language !== language || cached.command !== command || !sameKey(cached.theme, key)) {
+        cached = { language, command, theme: key, text: highlightCompactCode(command, language, theme) };
         this.syntaxCache.set(row, cached);
       }
       summary = cached.text;
@@ -260,7 +368,6 @@ export class CompactView {
       const suffix = truncateToWidth(status, width, "");
       return truncateToWidth(text, Math.max(0, width - visibleWidth(suffix))) + suffix;
     };
-    if (label === "codemode" && !this.showCode) summary = "";
     const inline = `${pad}${title}${summary ? ` ${summary}` : ""}`;
     if (label === "codemode" && (summary.includes("\n") || visibleWidth(inline + status) > width)) {
       lines.push(withStatus(pad + title));
@@ -276,30 +383,9 @@ export class CompactView {
     } else {
       lines.push(withStatus(`${pad}${title}${summary ? ` ${summary}` : ""}`));
     }
-    if (label === "codemode") {
-      const details = row.result?.details as { calls?: { id?: string; name: string; args?: string; status?: string }[] } | undefined;
-      const calls = Array.isArray(details?.calls) ? details.calls : [];
-      const liveCalls = [...this.nestedCalls.entries()].filter(([id]) => id.startsWith(`${row.toolCallId}/`)).map(([, call]) => call);
-      const children: ToolRow[] = calls.filter(call => typeof call?.name === "string").map((call, index) => {
-        const live = (call.id ? this.nestedCalls.get(call.id) : undefined)
-          ?? (call.id?.endsWith("/?") && liveCalls[index]?.name === call.name ? liveCalls[index] : undefined);
-        let args: unknown = live?.args;
-        if (!live) {
-          try { args = JSON.parse(call.args ?? "{}"); } catch { args = { title: call.args ?? "" }; }
-        }
-        const child: ToolRow = {
-          toolName: live?.name ?? call.name, toolCallId: call.id ?? `${row.toolCallId}/preview-${index}`,
-          args, cwd: row.cwd, outputPad: 0, executionStarted: true,
-          isPartial: live?.running ?? call.status === "running",
-          result: live?.result ?? (call.status === "error" || call.status === "cancelled" ? { isError: true } : undefined),
-          setExpanded() {}, render: () => [], invalidate() {},
-        };
-        return child;
-      });
-      this.groupRows(children, Math.max(1, width - visibleWidth(pad) - 2));
+    if (nested.length) {
       const indent = pad + "  ";
-      children.forEach(child => {
-        const rendered = this.renderRow(child, Math.max(1, width - visibleWidth(indent)));
+      nested.forEach(rendered => {
         // Nested headings already have the parent as their visual separator.
         for (const line of rendered.slice(rendered[0] === "" ? 1 : 0)) lines.push(fit(indent + line));
       });
@@ -321,7 +407,13 @@ export class CompactView {
       else delete (component as Partial<Component>).render;
       if (original.ownMouse) component.handleMouse = original.mouse;
       else delete component.handleMouse;
+      if (original.wrappedInvalidate) {
+        if (original.ownInvalidate) component.invalidate = original.invalidate;
+        else delete (component as Partial<Component>).invalidate;
+      }
     }
     this.originals.clear();
+    this.rowCache = new WeakMap(); this.messageCache = new WeakMap();
+    this.groupCache = new WeakMap(); this.nestedRows = new WeakMap(); this.syntaxCache = new WeakMap();
   }
 }

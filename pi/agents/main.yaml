@@ -1,4 +1,5 @@
 name: main
+description: Default agent which can launch subagents
 selectable: true
 model:
   name: global

@@ -2,6 +2,7 @@ import type { ExtensionContext, KeybindingsManager } from "@earendil-works/pi-co
 import { Container, Text, Spacer, isKeyRelease, isKeyRepeat, type Component, type EditorComponent, type ScrollView, type TUI } from "@earendil-works/pi-tui";
 import type { ViewedSessionInfo, ViewedSessionSource } from "../shared/viewed-session";
 import { ViewedTranscript, plainLabel } from "./transcript";
+import { sameKey, themeKey } from "./render-cache.js";
 
 type Branch = Component & {children: Component[]};
 type MainEditor = EditorComponent & {keybindings?: KeybindingsManager; actionHandlers?: Map<string, unknown>};
@@ -11,7 +12,7 @@ type NativeTUI = TUI & {
   resetTextSelection?(): void;
   getActiveSelectionText?(): string | undefined;
 };
-type Binding = {document: Branch; main: Branch; editor: Branch};
+type Binding = {document: Branch; main: Branch; editor: Branch; input: MainEditor};
 type Position = {top: number; follow: boolean};
 const branch = (component: Component | undefined): component is Branch => Array.isArray((component as Partial<Branch> | undefined)?.children);
 
@@ -24,7 +25,7 @@ function nativeBinding(tui: TUI): Binding | undefined {
   const editor = roots[4] as Branch;
   const input = editor.children[0] as MainEditor | undefined;
   if (editor.children.length !== 1 || typeof input?.getText !== "function" || !input.keybindings || !(input.actionHandlers instanceof Map)) return;
-  return {document, main: document.children[2] as Branch, editor};
+  return {document, main: document.children[2] as Branch, editor, input};
 }
 
 /** Display-only controller. Never binds/disposes sessions or mutates main's chat. */
@@ -71,11 +72,24 @@ export class ViewedSessionController {
     this.binding = binding; this.source = source; this.pane = pane; this.unsubscribe = unsubscribe;
     this.notice = undefined;
     this.visible = new Container();
-    this.visible.addChild({render: width => [
-      ...new Text(this.ctx.ui.theme.fg("accent", `Agent: ${plainLabel(source.title)}`)
-        + this.ctx.ui.theme.fg("muted", ` · read-only · tools: ${this.toolMode} · Esc returns to main · footer/runtime: main`), 1, 0).render(width),
-      ...(this.notice ? new Text(this.ctx.ui.theme.fg("warning", this.notice), 1, 0).render(width) : []),
-    ], invalidate() {}});
+    const title = new Text("", 1, 0), notice = new Text("", 1, 0);
+    let contentKey: unknown[] | undefined, renderKey: unknown[] | undefined;
+    let bannerLines: string[] = [];
+    this.visible.addChild({render: width => {
+      const theme = this.ctx.ui.theme;
+      const content = [...themeKey(theme), source.title, source.kind, this.toolMode, this.notice];
+      const key = [width, ...content];
+      if (sameKey(renderKey, key)) return bannerLines;
+      if (!sameKey(contentKey, content)) {
+        title.setText(theme.fg("accent", `${source.kind === "group" ? "Group" : "Agent"}: ${plainLabel(source.title)}`)
+          + theme.fg("muted", ` · read-only · tools: ${this.toolMode} · Esc returns to main · footer/runtime: main`));
+        notice.setText(this.notice ? theme.fg("warning", this.notice) : "");
+        contentKey = content;
+      }
+      bannerLines = [...title.render(width), ...(this.notice ? notice.render(width) : [])];
+      renderKey = key;
+      return bannerLines;
+    }, invalidate() { renderKey = undefined; title.invalidate(); notice.invalidate(); }});
     this.visible.addChild(new Spacer(1)); this.visible.addChild(pane);
     binding.document.children[2] = this.visible;
     installing = false;
@@ -88,7 +102,9 @@ export class ViewedSessionController {
     if (!this.source || this.disposed) return;
     try {
       this.pane!.sync(this.source.getSnapshot());
-      this.changed();
+      // sync updates/invalidate only changed native rows. A global invalidate
+      // here would discard all finished-row caches on every worker delta.
+      this.tui.requestRender();
     } catch (error) {
       this.restore();
       this.ctx.ui.notify(`Cannot display agent transcript: ${error instanceof Error ? error.message : String(error)}`, "warning");
@@ -108,8 +124,10 @@ export class ViewedSessionController {
       if (!isKeyRepeat(data)) this.exitKey = undefined;
       return;
     }
-    const editor = this.binding?.editor.children[0] as MainEditor | undefined;
-    if (!editor || this.tui.getFocusedComponent?.() !== editor) return;
+    const editor = this.binding?.input;
+    // Pi's extension dialogs replace the editor dock's child, not just focus.
+    // Only intercept the original main editor; selectors retain every key.
+    if (!editor || this.binding?.editor.children[0] !== editor || this.tui.getFocusedComponent?.() !== editor) return;
     const bindings = editor.keybindings;
     if (!bindings) { this.restore(); return {consume: true}; }
     const selectedText = this.tui.getActiveSelectionText?.();
@@ -131,7 +149,7 @@ export class ViewedSessionController {
       const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       // These commands operate the display only. Never pass a worker-looking
       // prompt, shell command, /skill, or session mutation to main by accident.
-      if (bindings.matches(data, "tui.input.submit") && /^\/(?:subagents|ui)(?:[ \t][^\r\n]*)?$/.test(text)) return;
+      if (bindings.matches(data, "tui.input.submit") && /^\/(?:groups|subagents|ui)(?:[ \t][^\r\n]*)?$/.test(text)) return;
       if (!isKeyRepeat(data)) this.warn("Agent view is read-only. Press Escape to return to main before submitting.");
       return {consume: true};
     }

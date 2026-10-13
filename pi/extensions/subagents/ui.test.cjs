@@ -12,7 +12,7 @@ async function ui() {
   const terminal=new tui.Container(); terminal.terminal={rows:18,columns:80};terminal.requestRender=()=>{};
   let done=false;
   const view=new AgentsView(workspace,terminal,themes.theme,()=>done=true);
-  return {view,terminal,records,listeners,tui,get done(){return done;}};
+  return {view,terminal,records,workspace,listeners,tui,theme:themes.theme,get done(){return done;}};
 }
 test('read-only viewer cycles active agents, groups idle, scrolls and disposes subscriptions',async()=>{
   const f=await ui();
@@ -26,6 +26,52 @@ test('read-only viewer cycles active agents, groups idle, scrolls and disposes s
   f.view.handleInput('\x1b[F');
   assert.match(plain(f.view.render(80)).join('\n'),/line 79/);
   f.view.handleInput('\x1b');assert.equal(f.done,true);assert.equal(f.listeners.size,0);
+});
+test('fallback transcript cache reuses finished rows and invalidates content/theme rather than unrelated status',async()=>{
+  const f=await ui();
+  try {
+    f.view.render(80);
+    const component=f.view.panes.get('main').component;
+    f.view.render(80); assert.equal(f.view.panes.get('main').component,component);
+    f.records.get('active').status='idle'; for(const listener of f.listeners) listener();
+    f.view.render(80); assert.equal(f.view.panes.get('main').component,component);
+    f.records.get('main').messages[0].content[0].text += '\nchanged in place';
+    for(const listener of f.listeners) listener();
+    f.view.render(80); assert.notEqual(f.view.panes.get('main').component,component);
+    const changed=f.view.panes.get('main').component;
+    f.view.render(20); assert.equal(f.view.panes.get('main').component,changed);
+    f.view.invalidate(); f.view.render(20); assert.notEqual(f.view.panes.get('main').component,changed);
+  } finally {f.view.dispose();}
+});
+test('fallback scopes tabs, idle counts and parents to one group and handles empty groups without main',async()=>{
+  const f=await ui(), {AgentsView}=await load('view.ts'), {GroupViewSelection}=await load('group-selection.ts');
+  f.view.dispose();
+  const groups=new GroupViewSelection();
+  f.workspace.rootGroupId='root-id';
+  const descriptor=(id,parentGroupId,kind,rootAgentInstanceId)=>({version:1,id,parentGroupId,kind,rootAgentInstanceId,label:id});
+  f.workspace.groups=new Map([
+    ['root-id',descriptor('root-id',null,'root','main')],
+    ['workflow-id',descriptor('workflow-id','root-id','workflow',null)],
+    ['worker-id',descriptor('worker-id','workflow-id','agents','active')],
+  ]);
+  for(const [name,record] of f.records){record.identity.groupId=name==='main'?'root-id':'worker-id';record.identity.instanceId=name;}
+  f.records.get('active').identity.parentName=null;
+  f.records.get('idle').identity.parentName='active';
+  groups.set(f.workspace,'worker-id');
+  const view=new AgentsView(f.workspace,f.terminal,f.theme,()=>{},groups);
+  try {
+    assert.equal(view.selected,'active');
+    let plain=view.render(80).map(f.tui.stripTerminalSequences).join('\n');
+    assert.doesNotMatch(plain.split('\n').slice(0,2).join('\n'),/main/); // Footer retains the restoration hint.
+    assert.match(plain,/Idle \(1\)/);
+    view.handleInput('i');view.handleInput('\t');assert.equal(view.selected,'idle');
+    plain=view.render(80).map(f.tui.stripTerminalSequences).join('\n');assert.match(plain,/parent: active/);
+    groups.set(f.workspace,'workflow-id');
+    assert.doesNotThrow(()=>view.render(1));
+    assert.match(view.render(80).map(f.tui.stripTerminalSequences).join('\n'),/No agents/);
+    view.handleInput('\t');view.handleInput('\x1b[H');
+    view.handleInput('\x1b');assert.equal(groups.id(f.workspace),'root-id');
+  } finally {view.dispose();}
 });
 test('narrow widths, resize, live updates, terminal-sequence removal and tool projections',async()=>{
   const f=await ui();

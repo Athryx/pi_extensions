@@ -1,0 +1,36 @@
+
+ Run the directed demo workflow
+
+
+ workflow flow.js · completed
+
+ Workflow completed. All workers remained in separate agent groups.
+
+ Reloaded keybindings, extensions, skills, prompts, themes, and context files
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Root group · ● main (main)
+/tmp/pi-workflow-smoke-oU740t/project
+↑10 ↓15 0.0%/64k (auto)                                                                                   test

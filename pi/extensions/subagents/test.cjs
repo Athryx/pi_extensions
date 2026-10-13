@@ -27,6 +27,34 @@ test('default_agent is optional, strict, project-trusted and project-preferred',
   } finally { await rm(dir, {recursive: true, force: true}); }
 });
 
+test('separate depth limits have strict ranges, defaults and trusted precedence', async () => {
+  const {loadConfig} = await load('config.ts');
+  const dir = await mkdtemp(join(tmpdir(), 'subagents-depth-config-'));
+  const user = join(dir,'user'), project = join(dir,'project');
+  try {
+    await mkdir(user); await mkdir(join(project,'.pi'),{recursive:true});
+    const defaults = await loadConfig(user,project,false);
+    assert.equal(defaults.max_depth,4); assert.equal(defaults.max_group_depth,4); assert.equal(defaults.max_running,8);
+    await writeFile(join(user,'subagents.json'),JSON.stringify({max_depth:1,max_group_depth:1,max_running:3}));
+    for (const value of [0,128]) {
+      await writeFile(join(project,'.pi/subagents.json'),JSON.stringify({max_group_depth:value}));
+      assert.equal((await loadConfig(user,project,true)).max_group_depth,value);
+      assert.equal((await loadConfig(user,project,false)).max_group_depth,1);
+      assert.equal((await loadConfig(user,project,true)).max_depth,1);
+      assert.equal((await loadConfig(user,project,true)).max_running,3);
+    }
+    for (const key of ['max_depth','max_group_depth','max_running']) {
+      for (const value of [-1,129,1.5,'2',null,false,[],{},...(key==='max_group_depth'?[]:[0])]) {
+        await writeFile(join(project,'.pi/subagents.json'),JSON.stringify({[key]:value}));
+        await assert.rejects(loadConfig(user,project,true),new RegExp(key));
+        assert.equal((await loadConfig(user,project,false)).max_group_depth,1);
+      }
+    }
+    await writeFile(join(project,'.pi/subagents.json'),JSON.stringify({max_group_depth:1,unknown:true}));
+    await assert.rejects(loadConfig(user,project,true),/unknown field/);
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
 test('discovery has no implicit bundled definitions', async () => {
   const {discoverTemplates} = await load('templates.ts');
   const result = await discoverTemplates([]);
@@ -41,6 +69,10 @@ test('strict YAML normalization and validation', async () => {
   assert.equal(t.model.name,'parent'); assert.equal(t.skills.include_defaults,true);
   assert.deepEqual(t.subagents.allowed,[]);
   assert.equal(t.selectable,true);
+  assert.equal(t.description,undefined);
+  assert.equal(p('name: worker\ndescription: Reviews changes').description,'Reviews changes');
+  assert.equal(p('name: worker\ndescription: ""').description,'');
+  for (const value of ['null','false','12','[]','{}']) assert.throws(()=>p('name: worker\ndescription: '+value), /description must be a string/);
   assert.equal(t.subagents.include_defaults,false);
   assert.equal(p('name: worker\nselectable: false').selectable,false);
   assert.deepEqual(p('name: worker\nsubagents: {include_defaults: false, extra: [worker], default: worker}').subagents.allowed,['worker']);
@@ -97,6 +129,23 @@ test('default child permissions expand after precedence and transitive quarantin
     assert.equal(refreshed.templates.get('main').subagents.allowed.includes('extra'),false);
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
+test('child catalog uses only allowed templates and optional descriptions', async () => {
+  const {promptIdentity,templateLabel} = await load('loadout.ts'), {normalizeTemplate} = await load('templates.ts');
+  const parent = normalizeTemplate({name:'parent',subagents:{allowed:['reviewer','helper'],default:'reviewer'}}, '/tmp/parent.yaml');
+  const templates = new Map([
+    ['reviewer',normalizeTemplate({name:'reviewer',description:'Reviews\n changes',selectable:false}, '/tmp/reviewer.yaml')],
+    ['helper',normalizeTemplate({name:'helper'}, '/tmp/helper.yaml')],
+    ['denied',normalizeTemplate({name:'denied',description:'Not permitted'}, '/tmp/denied.yaml')],
+  ]);
+  const identity = {name:'main',role:'interactive',parentName:null};
+  const prompt = promptIdentity(identity,parent,name=>templates.get(name)).agent_workspace;
+  assert.match(prompt, /Allowed child templates:\n- reviewer — Reviews changes\n- helper\nDefault child: reviewer/);
+  assert.doesNotMatch(prompt, /denied|Not permitted/);
+  assert.equal(templateLabel({name:'blank',description:'  \n '}), 'blank');
+  const leaf = normalizeTemplate({name:'leaf'}, '/tmp/leaf.yaml');
+  assert.doesNotMatch(promptIdentity(identity,leaf).agent_workspace, /Allowed child templates/);
+});
+
 test('independent model inheritance, child permissions and strict tool schemas', async () => {
   const {selection,loadout} = await load('loadout.ts'), {parseTemplate} = await load('templates.ts'), {registerTools} = await load('tools.ts');
   const parent={model:{provider:'p',id:'one'},thinking:'low'}, global={model:{provider:'g',id:'two'},thinking:'high'};

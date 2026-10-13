@@ -1,0 +1,36 @@
+ Group: Workflow: flow.js · read-only · tools: compact · Esc returns to main · footer/runtime: main
+
+
+
+ [subagents.group-overview.v1]
+
+ Workflow: flow.js [b80610d6-32c5-4687-8136-95028bc15a74]
+ Read-only group overview · No agents
+ Status: completed
+   Agent: reader-1 [2d69d2ec-687b-4c72-ae81-d62647213c67] · 1 agents · completed
+   Agent: conventions-1 [9b5a48d1-dc76-4588-b4d3-3388ce672378] · 1 agents · completed
+   Agent: writer-1 [31acc460-18f8-4960-986f-e7c99ff1deac] · 1 agents · completed
+ Use /groups <id> to inspect a child group; Escape returns to main (exit overlays first).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Workflow: flow.js · No agents
+/tmp/pi-workflow-smoke-oU740t/project
+↑10 ↓15 0.0%/64k (auto)                                                                                   test
+Viewing Workflow: flow.js (read-only; main runtime)

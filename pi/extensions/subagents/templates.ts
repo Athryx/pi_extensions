@@ -5,7 +5,7 @@ import { object, pathFrom, strings } from "./config";
 import type { Template } from "./types";
 export const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 export function validName(name: string): void {
-  if (!NAME.test(name)) throw new Error("Names must start with a letter and contain at most 64 letters, digits, underscores or hyphens");
+  if (typeof name !== "string" || !NAME.test(name)) throw new Error("Names must start with a letter and contain at most 64 letters, digits, underscores or hyphens");
 }
 function inherit(value: unknown, field: string): string {
   if (value === undefined || value === null || value === "") return "parent";
@@ -21,10 +21,17 @@ export function parseTemplate(text: string, source: string): Template {
   if (Buffer.byteLength(text) > 128 * 1024) throw new Error("Template exceeds 128 KiB");
   const document = parseDocument(text, { uniqueKeys: true, strict: true });
   if (document.errors.length || document.warnings.length) throw new Error([...document.errors, ...document.warnings].map(e => e.message).join("; "));
-  const raw = document.toJS({ maxAliasCount: 32 });
-  const data = object(raw, ["name", "selectable", "model", "tools", "skills", "prompt", "subagents"], source);
+  return normalizeTemplate(document.toJS({ maxAliasCount: 32 }), source, false);
+}
+export function normalizeTemplate(raw: unknown, source: string, boundSerializedSize = true): Template {
+  if (boundSerializedSize) {
+    const encoded = JSON.stringify(raw);
+    if (!encoded || Buffer.byteLength(encoded) > 128 * 1024) throw new Error("Template exceeds 128 KiB");
+  }
+  const data = object(raw, ["name", "description", "selectable", "model", "tools", "skills", "prompt", "subagents"], source);
   if (typeof data.name !== "string") throw new Error("name must be a string");
   validName(data.name);
+  if (data.description !== undefined && typeof data.description !== "string") throw new Error("description must be a string");
   const model = object(data.model ?? {}, ["name", "thinking"], "model");
   const tools = object(data.tools ?? {}, ["include_defaults", "extra"], "tools");
   const skills = object(data.skills ?? {}, ["include_defaults", "extra_paths"], "skills");
@@ -43,7 +50,8 @@ export function parseTemplate(text: string, source: string): Template {
     if (!include_defaults && !allowed.includes(children.default)) throw new Error("subagents.default must be in allowed");
   }
   return {
-    name: data.name, selectable: bool(data.selectable, "selectable"), source, model: { name, thinking },
+    name: data.name, ...(data.description !== undefined ? {description: data.description as string} : {}),
+    selectable: bool(data.selectable, "selectable"), source, model: { name, thinking },
     tools: { include_defaults: bool(tools.include_defaults, "tools.include_defaults"), extra: strings(tools.extra ?? [], "tools.extra") },
     skills: { include_defaults: bool(skills.include_defaults, "skills.include_defaults"), extra_paths: strings(skills.extra_paths ?? [], "skills.extra_paths").map(p => pathFrom(dirname(source), p)) },
     prompt: data.prompt as string ?? "",

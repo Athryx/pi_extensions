@@ -12,7 +12,7 @@ export function plainLabel(value: string): string {
   return stripTerminalSequences(value).replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
 }
 type MessageRow = {message: AgentMessage; components: Component[]; streaming?: boolean};
-type ToolRow = {component: ToolExecutionComponent; args: unknown; result?: unknown; update?: unknown};
+type ToolRow = {component: ToolExecutionComponent; args: unknown; result?: unknown; update?: unknown; argsComplete?: boolean; started?: boolean};
 
 /** Native components stay stable across deltas; no worker content is persisted in main. */
 export class ViewedTranscript extends Container {
@@ -75,9 +75,10 @@ export class ViewedTranscript extends Container {
             tool.component.setExpanded(this.expanded);
             this.tools.set(block.id, tool);
           } else if (tool.args !== block.arguments || message.stopReason === "pending") { tool.component.updateArgs(block.arguments); tool.args = block.arguments; }
-          if (message.stopReason !== "pending") tool.component.setArgsComplete();
+          if (message.stopReason !== "pending" && !tool.argsComplete) { tool.component.setArgsComplete(); tool.argsComplete = true; }
           if ((message.stopReason === "aborted" || message.stopReason === "error") && !tool.result) {
-            tool.component.updateResult({content: [{type: "text", text: message.errorMessage ?? "Operation aborted"}], isError: true});
+            const result = {content: [{type: "text" as const, text: message.errorMessage ?? "Operation aborted"}], isError: true};
+            tool.component.updateResult(result); tool.result = result;
           }
           seenTools.add(block.id); children.push(tool.component);
         }
@@ -115,6 +116,9 @@ export class ViewedTranscript extends Container {
     }
     for (const [id, event] of updates) {
       if (event.parentToolCallId) {
+        // Retained end events are immutable snapshots. Do not clone the same
+        // finalized result again on each assistant delta and invalidate its row.
+        if (this.updates.get(id) === event && this.nestedCalls.has(id)) continue;
         const previous = this.nestedCalls.get(id);
         this.nestedCalls.set(id, {
           name: event.toolName, args: "args" in event ? event.args : previous?.args,
@@ -124,7 +128,8 @@ export class ViewedTranscript extends Container {
       } else {
         const tool = this.tools.get(id);
         if (!tool || tool.update === event) continue;
-        tool.component.markExecutionStarted(); tool.component.setArgsComplete();
+        if (!tool.started) { tool.component.markExecutionStarted(); tool.started = true; }
+        if (!tool.argsComplete) { tool.component.setArgsComplete(); tool.argsComplete = true; }
         if (event.type === "tool_execution_update") tool.component.updateResult({...event.partialResult, isError: false}, true);
         if (event.type === "tool_execution_end") tool.component.updateResult({...event.result, isError: event.isError, durationMs: event.durationMs});
         tool.update = event;

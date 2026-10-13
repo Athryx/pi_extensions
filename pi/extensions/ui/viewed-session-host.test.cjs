@@ -52,7 +52,7 @@ test('real InteractiveMode startup discovers UI service and /subagents demo view
       models: [{ id: 'fake', name: 'Fake', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 }],
       streamSimple(model, context) {
         const stream = ai.createAssistantMessageEventStream();
-        const worker = ai.getCurrentSystemPrompt(context.messages).includes('Instance: demo');
+        const worker = ai.getCurrentSystemPrompt(context.messages).includes('Name: demo');
         requests.push({ worker, context });
         assert.ok(requests.length <= 4, 'test provider cannot start an unbounded workflow');
         void (async () => {

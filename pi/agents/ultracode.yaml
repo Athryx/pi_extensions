@@ -1,0 +1,16 @@
+name: ultracode
+description: Agent which is encouraged to spawn subagents and create dynamic workflows to accomplish its task
+selectable: true
+model:
+  name: global
+  thinking: global
+tools:
+  include_defaults: true
+  extra: [workflow]
+skills:
+  include_defaults: true
+subagents:
+  allowed: [subagent]
+  default: subagent
+prompt: |
+  Utilize dynamic workflows and subagents extensively to divide up work and tasks.

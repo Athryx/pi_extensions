@@ -3,9 +3,11 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Selection, Template, Identity } from "./types";
 export const COMMS = ["send_message", "wait_message", "list_agents"];
 export const PI_DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
-export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS, name = "worker"): string[] {
+export function isGroupRoot(identity: Identity): boolean { return identity.parentName === null; }
+export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS, identity: Identity | string = "worker"): string[] {
   const tools = [...new Set([...(template.tools.include_defaults ? defaults : []), ...template.tools.extra, ...COMMS, ...(template.subagents.allowed.length ? ["create_agent"] : [])])];
-  return name === "main" && !template.subagents.allowed.length ? tools.filter(tool => !COMMS.includes(tool) && tool !== "create_agent") : tools;
+  const root = typeof identity === "string" ? identity === "main" : isGroupRoot(identity);
+  return tools.filter(tool => tool !== "create_agent" || template.subagents.allowed.length).filter(tool => !(root && !template.subagents.allowed.length && COMMS.includes(tool)));
 }
 export function checkTools(pi: ExtensionAPI, names: string[]): void {
   const known = new Set(pi.getAllTools().map(t => t.name));
@@ -22,10 +24,15 @@ export function selection(template: Template, parent: Selection | undefined, glo
   const thinking = template.model.thinking === "global" ? global?.thinking : template.model.thinking === "parent" ? inherit?.thinking : template.model.thinking as ThinkingLevel;
   return {model, thinking: thinking ?? "medium"};
 }
-export function promptIdentity(identity: Identity, template: Template): Record<string, string> {
+export function templateLabel(template: Pick<Template, "name" | "description">): string {
+  const description = template.description?.replace(/\s+/g, " ").trim();
+  return template.name + (description ? " — " + description : "");
+}
+export function promptIdentity(identity: Identity, template: Template, resolveTemplate?: (name: string) => Template): Record<string, string> {
+  const children = template.subagents.allowed.map(name => "- " + templateLabel(resolveTemplate?.(name) ?? {name})).join("\n");
   return {
-    agent_identity: "Instance: " + identity.name + ". Role: " + identity.role + ". Parent: " + (identity.parentName ?? "none") + ".",
-    agent_template: template.prompt,
-    agent_workspace: identity.name === "main" && !template.subagents.allowed.length ? "No child templates are allowed. Workspace tools are unavailable." : "Messages are attributed to their sender. send_message queues steering context and resumes idle agents. wait_message waits up to 600 seconds, but refuses deadlock. Your final answer is automatically sent to your parent if present. Allowed child templates: " + (template.subagents.allowed.join(", ") || "none") + ". Default child: " + (template.subagents.default ?? "none; specify agent_template") + ".",
+    agent_identity: "Name: " + identity.name + ". Role: " + identity.role + ". Parent: " + (identity.parentName ?? "none") + ".",
+    agent_instructions: template.prompt,
+    agent_workspace: (isGroupRoot(identity) && identity.role === "worker" ? "You are a non-interactive agent-group root with no messaging parent. Your assigned task response returns privately to the workflow. " : "") + (isGroupRoot(identity) && !template.subagents.allowed.length ? "No child templates are allowed. Workspace tools are unavailable." : "Messages are attributed to their sender and confined to your agent group. send_message queues steering context and resumes idle agents. wait_message waits up to 600 seconds, but refuses deadlock. Your final answer is automatically sent to your same-group parent if present. Allowed child templates:\n" + (children || "none") + "\nDefault child: " + (template.subagents.default ?? "none; specify agent_template") + "."),
   };
 }

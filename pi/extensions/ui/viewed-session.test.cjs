@@ -141,6 +141,30 @@ function toolRows(chat) {
   return rows;
 }
 
+test('viewed banner caches complete lines and follows title, width, mode and warning changes', async () => {
+  const f = await fixture();
+  const live = source('banner', { messages: [user('Viewed text')] });
+  try {
+    f.service().setViewedSession(live);
+    const banner = f.document.children[2].children[0];
+    const first = banner.render(100);
+    assert.equal(banner.render(100), first);
+    assert.notEqual(banner.render(30), first);
+    live.title = 'Renamed worker';
+    assert.match(plain(banner.render(100)), /Renamed worker/);
+    live.kind = 'group';
+    assert.match(plain(banner.render(100)), /^\s*Group: Renamed worker/);
+    assert.equal(banner.render(100), banner.render(100));
+    live.kind = 'agent';
+    assert.match(plain(banner.render(100)), /^\s*Agent: Renamed worker/);
+    await f.command('compact-code');
+    assert.match(plain(banner.render(100)), /tools: compact-code/);
+    f.editor.setText('blocked submission'); f.press('\r');
+    assert.match(plain(banner.render(100)), /Agent view is read-only/);
+    const warning = banner.render(100); assert.equal(banner.render(100), warning);
+  } finally { f.dispose(); }
+});
+
 test('discovery is synchronous, versioned, and optional', async () => {
   const api = await ready;
   const events = api.createEventBus();
@@ -558,6 +582,31 @@ test('source preflight failures preserve the existing view, and duplicate select
   } finally { f.dispose(); }
 });
 
+test('worker deltas preserve finished row and nested result caches instead of globally invalidating history', async () => {
+  const f = await fixture();
+  const updates = new Map([['parent/1', { type: 'tool_execution_end', parentToolCallId: 'parent',
+    toolCallId: 'parent/1', toolName: 'read', args: { path: 'nested.ts' }, isError: false,
+    result: { content: [text('one\ntwo')], details: undefined } }]]);
+  const tail = assistant([text('STREAM BEFORE')], 'pending'); tail.timestamp = 4;
+  const messages = [assistant([call('parent', 'codemode', { code: 'text(1);' })]),
+    result('parent', 'codemode', '', { details: { calls: [{ id: 'parent/1', name: 'read', args: '{}', status: 'ok' }] } }), tail];
+  const live = source('cached-history', { messages, toolUpdates: updates });
+  try {
+    f.service().setViewedSession(live); f.render();
+    const row = toolRows(f.document.children[2])[0];
+    const first = row.render(100);
+    let completions = 0;
+    const complete = row.setArgsComplete;
+    row.setArgsComplete = function () { completions++; return complete.call(this); };
+    tail.content[0].text = 'STREAM AFTER'; live.update({ messages, toolUpdates: updates });
+    assert.match(f.render(), /STREAM AFTER/);
+    assert.equal(row.render(100), first, 'finished parent and nested layouts survive unrelated streaming');
+    assert.equal(completions, 0, 'completed native renderers are not rebuilt on unrelated deltas');
+    updates.set('parent/1', { ...updates.get('parent/1'), result: { content: [text('one\ntwo\nthree')] } });
+    live.update({ messages, toolUpdates: updates }); assert.match(f.render(), /nested\.ts:1-3/);
+  } finally { f.dispose(); }
+});
+
 test('pending assistant content and tool arguments mutated in place invalidate the native rows', async () => {
   const f = await fixture();
   const args = { path: 'before.ts' };
@@ -577,6 +626,24 @@ test('pending assistant content and tool arguments mutated in place invalidate t
     assert.match(f.render(), /after\.ts/);
     assert.doesNotMatch(f.render(), /BEFORE CONTENT|before\.ts/);
   } finally { f.dispose(); }
+});
+
+test('native extension dialogs replacing the editor dock retain input and never restore the viewed group', async () => {
+  const f = await fixture();
+  const live = source('native-dialog', {messages: [user('GROUP WORKER')]});
+  const dock = f.roots[4];
+  try {
+    f.service().setViewedSession(live);
+    const dialog = new f.api.Input(), received = [];
+    dialog.handleInput = data => received.push(data);
+    dock.clear(); dock.addChild(dialog); f.tui.setFocus(dialog);
+    for (const key of ['\x1b[B', '\x1b', '\x03', '\r']) f.press(key);
+    assert.deepEqual(received, ['\x1b[B', '\x1b', '\x03', '\r']);
+    assert.equal(f.service().getViewedSession().id, 'native-dialog');
+    assert.deepEqual(f.actions, []);
+  } finally {
+    dock.clear(); dock.addChild(f.editor); f.tui.setFocus(f.editor); f.dispose();
+  }
 });
 
 test('held Kitty Ctrl+C/Escape exits once and cannot clear or interrupt main on repeat, while a new press stays native', async () => {
@@ -652,7 +719,7 @@ test('view is read-only: ordinary submission and session/model actions are block
     assert.deepEqual(f.actions, [], 'return-to-main does not abort, clear, or cycle the main session');
     assert.deepEqual(f.editor.history, history, 'view exit does not save a cleared main draft');
     api.setViewedSession(live);
-    for (const allowed of ['/subagents', '/ui compact']) {
+    for (const allowed of ['/subagents', '/groups', '/groups root', '/ui compact']) {
       f.editor.setText(allowed);
       f.press('\r');
       assert.equal(f.submitted.at(-1), allowed);

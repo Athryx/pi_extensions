@@ -17,5 +17,5 @@
   ],
   "steeringMode": "all",
   "editorPaddingX": 1,
-  "defaultTools": ["+codemode"]
+  "defaultTools": ["+codemode", "+workflow"]
 }

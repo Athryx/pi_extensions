@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { resolve, relative, isAbsolute } from "node:path";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 export const MEMBER_KEY = "subagents.member.v1", DELIVERY_KEY = "subagents.delivery.v1", STATE_KEY = "subagents.state.v1", TEMPLATE_KEY = "subagents.template.v1";
+export const GROUP_KEY = "subagents.group.v1", REGISTRY_KEY = "subagents.workflow-registry.v1";
 export const MAIN_TEMPLATE_LOCK_KEY = "subagents.main-template-lock.v1";
 /** Session-wide, not branch-relative: rewinding the tree must not change agents. */
 export function mainTemplateLock(manager: Pick<SessionManager, "getEntries">): string | undefined {
@@ -16,6 +17,20 @@ export function hasUserMessage(manager: Pick<SessionManager, "getEntries">): boo
 }
 export function customData<T>(manager: Pick<SessionManager, "getBranch">, key: string): T[] {
   return manager.getBranch().flatMap(e => e.type === "custom" && e.customType === key ? [e.data as T] : []);
+}
+/** Workspace changes (fork/new) retain earlier entries but never their coordination state. */
+export function workspaceData<T>(manager: Pick<SessionManager, "getBranch">, key: string, workspaceId: string): T[] {
+  let active: string | undefined;
+  const result: T[] = [];
+  for (const entry of manager.getBranch()) {
+    if (entry.type !== "custom") continue;
+    if (entry.customType === "subagents.identity.v1") {
+      const identity = entry.data as {role?: string; workspaceId?: string};
+      if (identity?.role === "interactive") active = identity.workspaceId;
+    }
+    if (entry.customType === key && (active === undefined || active === workspaceId)) result.push(entry.data as T);
+  }
+  return result;
 }
 export function workspaceFile(file: string, root: string): string {
   const path = resolve(file), base = resolve(root);

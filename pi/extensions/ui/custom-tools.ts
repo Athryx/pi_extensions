@@ -107,7 +107,8 @@ export function customToolSummary(name: string, input: unknown, result?: Result)
       const state = details.status === "received" ? ` · received from ${senders.join(", ") || "agent"}` : details.status === "timeout" ? " · timed out" : "";
       return `timeout=${inline(args.timeout ?? 120)}s${state}`;
     }
-    case "list_agents": return `${args.all === true ? "all agents" : "direct children"}${Array.isArray(result?.details) ? ` · ${result.details.length} agents` : ""}`;
+    case "list_agents": return `${args.all === true ? "all agents in group" : "direct children"}${Array.isArray(result?.details) ? ` · ${result.details.length} agents` : ""}`;
+    case "workflow": return `${inline(args.path) || "…"}${typeof details.status === "string" ? ` · ${inline(details.status)}` : ""}`;
     case "interact_bash": return `${inline(args.session_name) || "…"} · ${typeof args.stdin === "string" && args.stdin ? "send input" : "poll"}${args.yield_time_ms !== undefined ? ` · wait=${inline(args.yield_time_ms)}ms` : ""}`;
     case "close_bash": return inline(args.session_name) || "…";
   }

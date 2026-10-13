@@ -84,10 +84,12 @@ async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', n
     f.prompt = text => session.prompt(text);
     f.reload = () => session.reload();
     f.tools = () => session.getActiveToolNames();
+    // Inspect durable selection state, not a hidden workspace tool on a leaf root.
     f.template = async () => {
-      const runner = session.extensionRunner;
-      const result = await runner.getToolDefinition('list_agents').execute('lock-test', {all: true}, undefined, undefined, runner.createToolContext('lock-test'));
-      return result.details.find(r => r.name === 'main').template;
+      const branch = f.manager.getBranch();
+      return f.locks().at(-1)?.template
+        ?? branch.filter(e => e.type === 'custom' && e.customType === TEMPLATE).at(-1)?.data.template
+        ?? branch.filter(e => e.type === 'custom' && e.customType === IDENTITY).at(-1)?.data.template;
     };
     f.emitUser = async () => {
       const message = user();
@@ -181,6 +183,28 @@ test('selectable only filters the template picker/completions; viewer command is
     assert.equal(await f.template(), 'hidden');
     await f.prompt('/subagents main');
     assert.equal(f.viewed.at(-1), undefined);
+    assert.deepEqual(f.errors, []);
+  } finally { await f.cleanup(); }
+});
+
+test('agent picker displays descriptions but selects by template name', async () => {
+  const f = await fixture({ui: true});
+  try {
+    await writeFile(join(f.agentDir, 'agents/leaf.yaml'), 'name: leaf\ndescription: Reads files');
+    await writeFile(join(f.agentDir, 'agents/subagent.yaml'), 'name: subagent\ndescription: Handles delegated tasks');
+    await writeFile(join(f.agentDir, 'agents/hidden.yaml'), 'name: hidden\nselectable: false\ndescription: Hidden choice');
+    await f.reload();
+    assert.deepEqual(f.completions('le'), [{value:'leaf',label:'leaf — Reads files'}]);
+    f.choice = 'leaf — Reads files';
+    await f.command();
+    assert.ok(f.menus.at(-1).options.includes(f.choice));
+    assert.ok(f.menus.at(-1).options.includes('main'));
+    assert.ok(!f.menus.at(-1).options.some(label => label.includes('hidden')));
+    assert.equal(await f.template(), 'leaf');
+    await f.command('main');
+    await f.prompt('inspect child catalog');
+    const ai = await host('node_modules/@earendil-works/pi-ai/dist/index.js');
+    assert.match(ai.getCurrentSystemPrompt(f.requests.at(-1).context.messages), /subagent — Handles delegated tasks/);
     assert.deepEqual(f.errors, []);
   } finally { await f.cleanup(); }
 });

@@ -1,0 +1,36 @@
+Workflow: flow.js [a1d920d9-069a-4e6a-a69f-b5b188571553]
+Read-only group overview · No agents
+Status: completed
+  Agent: reader-1 [da04d4ff-ebfd-4038-8c4f-580089bc5716] · 1 agents · completed
+  Agent: conventions-1 [9c434390-cf1b-4641-81ae-5df901ef2e97] · 1 agents · completed
+  Agent: writer-1 [82b909b5-fdf8-4349-a962-8b2e9e841160] · 1 agents · completed
+Use /groups <id> to inspect a child group; Escape returns to main (exit overlays first).
+Esc main
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
