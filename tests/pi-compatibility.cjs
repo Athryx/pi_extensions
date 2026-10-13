@@ -55,7 +55,9 @@ test('all extensions load and execute against the installed pi API', async () =>
     const event = { systemPromptOptions: { sections: { existing: 'preserved' } } };
     await emit('before_agent_start', event);
     assert.equal(event.systemPromptOptions.sections.existing, 'preserved');
-    assert.match(event.systemPromptOptions.sections.goal_mode, /Only call set_goal/);
+    assert.equal(event.systemPromptOptions.sections.goal_mode, undefined);
+    assert.match(tools.get('set_goal').promptGuidelines.join('\n'), /only when the user explicitly asks/);
+    assert.match(tools.get('set_goal_status').promptGuidelines.join('\n'), /if it is still running, keep working/);
   } finally {
     await emit('session_shutdown');
   }

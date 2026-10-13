@@ -141,7 +141,7 @@ test('root command wiring keeps non-TUI output, overlay fallback and lifecycle c
   process.env.PI_CODING_AGENT_DIR = join(dir, 'agent');
   // Templates are external resources, so supply explicit test definitions.
   await mkdir(join(dir, 'agent/agents'), {recursive: true});
-  await writeFile(join(dir, 'agent/agents/main.yaml'), 'name: main\nsubagents: {allowed: [subagent], default: subagent}\n');
+  await writeFile(join(dir, 'agent/agents/main.yaml'), 'name: main\nsubagents: {extra: [subagent], default: subagent}\n');
   await writeFile(join(dir, 'agent/agents/subagent.yaml'), 'name: subagent\n');
   const manager = sdk.SessionManager.inMemory(dir);
   const identity = {version: 1, workspaceId: 'workspace', instanceId: 'root', name: 'main', template: 'main', role: 'interactive', parentName: null};

@@ -9,5 +9,6 @@ tools:
 skills:
   include_defaults: true
 subagents:
-  allowed: [subagent]
+  include_defaults: false
+  extra: [+subagent]
   default: subagent

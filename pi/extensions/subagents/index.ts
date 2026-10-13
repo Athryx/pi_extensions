@@ -6,7 +6,7 @@ import { IDENTITY_KEY, isWorkerSession } from "../shared/agent-role";
 import { loadConfig } from "./config";
 import { discoverTemplates } from "./templates";
 import { customData, TEMPLATE_KEY, DELIVERY_KEY, MAIN_TEMPLATE_LOCK_KEY, mainTemplateLock, hasUserMessage } from "./persistence";
-import { promptIdentity, templateLabel, checkTools, loadout, selection, PI_DEFAULT_TOOLS } from "./loadout";
+import { promptIdentity, templateLabel, checkTools, loadout, toolEnabled, selection, PI_DEFAULT_TOOLS } from "./loadout";
 import { registerTools } from "./tools";
 import { message, MESSAGE_KEY } from "./messages";
 import { Workspace } from "./workspace";
@@ -77,9 +77,9 @@ export default function subagents(pi: ExtensionAPI) {
     const current = get(), root = current.get("main");
     registerTools(pi, get, "main", !!root.template.subagents.allowed.length);
     const mainOnly = ["finish_plan", "set_goal", "set_goal_status", "ask_question"].filter(n => pi.getAllTools().some(t => t.name === n));
-    const names = [...loadout(root.template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS, "main"), ...mainOnly];
+    const names = loadout(root.template, root.settings?.getDefaultTools() ?? PI_DEFAULT_TOOLS, "main", mainOnly);
     if (root.template.tools.include_defaults && names.includes("bash")) {
-      for (const name of ["interact_bash", "close_bash"]) if (pi.getAllTools().some(t => t.name === name)) names.push(name);
+      for (const name of ["interact_bash", "close_bash"]) if (toolEnabled(root.template, name) && pi.getAllTools().some(t => t.name === name)) names.push(name);
     }
     checkTools(pi, names); pi.setActiveTools([...new Set(names)]);
   }

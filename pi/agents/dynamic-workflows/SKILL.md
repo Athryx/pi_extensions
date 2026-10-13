@@ -55,10 +55,10 @@ Useful definition fields:
 | --- | --- |
 | `name` | Required role name; starts with a letter, at most 64 letters/digits/underscores/hyphens. |
 | `prompt` | Instructions for the role. |
-| `tools` | `{include_defaults, extra}`; extras are tool names. Defaults are enabled unless explicitly disabled. |
-| `skills` | `{include_defaults, extra_paths}`; defaults are enabled unless disabled. Relative extra paths resolve from the workflow file's directory. |
+| `tools` | `{include_defaults, extra}`; extras are ordered tool-name modifiers: `name`/`+name` adds, `-name` removes. Defaults are enabled unless explicitly disabled. |
+| `skills` | `{include_defaults, extra_paths}`; defaults are enabled unless disabled. Extra paths are a plain list, not name modifiers; relative paths resolve from the workflow file's directory. |
 | `model` | `{name, thinking}`; omitted values inherit from the caller. `name` accepts `parent`, `global`, or `provider/model-id`; `thinking` accepts `parent`, `global`, or `off|minimal|low|medium|high|xhigh|max`. `global` uses the main session's selection. |
-| `subagents` | Disabled by default. To let a role create children, use `{include_defaults: false, extra: ["child-role"], default: "child-role"}` with registered role names. Prefer workflow composition for fan-out. |
+| `subagents` | Disabled by default. `extra` uses ordered role-name modifiers: `name`/`+name` adds, `-name` removes from defaults. To create children, use `{include_defaults: false, extra: ["child-role"], default: "child-role"}` with registered role names. `default` must remain selected; `allowed` is not supported. Prefer workflow composition for fan-out. |
 
 Choose narrow tool and skill loadouts. Registration is atomic; unknown fields, duplicate names, invalid values and missing child-role references fail. Later batches can add roles, not replace definitions. Roles are available only within this invocation.
 

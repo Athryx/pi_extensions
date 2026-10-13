@@ -4,7 +4,7 @@ import {
   createCodemodeExtension, createToolSearchExtension, createMcpExtension,
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { loadout, checkTools, promptIdentity, PI_DEFAULT_TOOLS } from "./loadout";
+import { loadout, checkTools, promptIdentity, toolEnabled, PI_DEFAULT_TOOLS } from "./loadout";
 import { isInteractiveTool } from "../shared/interactive";
 import { registerTools } from "./tools";
 import { registerWorkflowAgents } from "./workflow-agents";
@@ -47,7 +47,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
       // Interactive helpers register hidden definitions headlessly, including late session_start tools.
       for (const tool of pi.getAllTools()) if (tool.exposure === "hidden") allowed.delete(tool.name);
       if (record.template.tools.include_defaults && allowed.has("bash")) for (const name of ["interact_bash", "close_bash"]) {
-        if (pi.getAllTools().some(t => t.name === name)) allowed.add(name);
+        if (toolEnabled(record.template, name) && pi.getAllTools().some(t => t.name === name)) allowed.add(name);
       }
       checkTools(pi, [...allowed].filter(name => !name.startsWith("mcp__"))); pi.setActiveTools([...allowed]);
     };
@@ -63,7 +63,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
     extensionsOverride: base => {
       // Enhanced bash uses companion tools for background sessions; retain them with default bash.
       if (record.template.tools.include_defaults && allowed.has("bash")) for (const name of ["interact_bash", "close_bash"]) {
-        if (base.extensions.some(extension => extension.tools.has(name))) allowed.add(name);
+        if (toolEnabled(record.template, name) && base.extensions.some(extension => extension.tools.has(name))) allowed.add(name);
       }
       // Hide unselected initial registrations from codemode/search as well as direct declarations.
       for (const extension of base.extensions) for (const [name, tool] of extension.tools) {
@@ -89,7 +89,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
     cwd: workspace.cwd, agentDir: workspace.agentDir, settingsManager: settings, resourceLoader: loader,
     sessionManager: record.manager, modelRuntime: runtime, model, thinkingLevel: record.selection!.thinking,
     // Reserve optional companion names in the immutable SDK selector: enhanced bash registers them on session_start.
-    tools: [...allowed, ...(record.template.tools.include_defaults && allowed.has("bash") ? ["interact_bash", "close_bash"] : [])],
+    tools: [...allowed, ...(record.template.tools.include_defaults && allowed.has("bash") ? ["interact_bash", "close_bash"].filter(name => toolEnabled(record.template, name)) : [])],
   });
   record.session = session;
   try {

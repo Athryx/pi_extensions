@@ -1,13 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Selection, Template, Identity } from "./types";
+import { applyModifiers } from "./modifiers";
 export const COMMS = ["send_message", "wait_message", "list_agents"];
 export const PI_DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
 export function isGroupRoot(identity: Identity): boolean { return identity.parentName === null; }
-export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS, identity: Identity | string = "worker"): string[] {
-  const tools = [...new Set([...(template.tools.include_defaults ? defaults : []), ...template.tools.extra, ...COMMS, ...(template.subagents.allowed.length ? ["create_agent"] : [])])];
+export function loadout(template: Template, defaults: readonly string[] = PI_DEFAULT_TOOLS, identity: Identity | string = "worker", automaticTools: readonly string[] = []): string[] {
+  const tools = applyModifiers([...(template.tools.include_defaults ? defaults : []), ...COMMS, ...(template.subagents.allowed.length ? ["create_agent"] : []), ...automaticTools], template.tools.extra);
   const root = typeof identity === "string" ? identity === "main" : isGroupRoot(identity);
   return tools.filter(tool => tool !== "create_agent" || template.subagents.allowed.length).filter(tool => !(root && !template.subagents.allowed.length && COMMS.includes(tool)));
+}
+/** Automatic companions must respect explicit removals too. */
+export function toolEnabled(template: Template, name: string): boolean {
+  return applyModifiers([name], template.tools.extra).includes(name);
 }
 export function checkTools(pi: ExtensionAPI, names: string[]): void {
   const known = new Set(pi.getAllTools().map(t => t.name));

@@ -36,7 +36,7 @@ async function fixture({factory, disk=false, respond}={}) {
   manager.appendMessage({role:'user',content:'main task',timestamp:Date.now()});
   const identity={version:1,workspaceId:'test-workspace',instanceId:'root',name:'main',template:'main',role:'interactive',parentName:null,rootSessionFile:manager.getSessionFile()};
   manager.appendCustomEntry('subagents.identity.v1',identity);
-  const templates=new Map(['main','subagent','leader'].map(n=>[n,parseTemplate('name: '+n+'\n'+(n==='subagent'?'':'subagents: {allowed: [subagent, leader], default: subagent}'),join(dir,n+'.yaml'))]));
+  const templates=new Map(['main','subagent','leader'].map(n=>[n,parseTemplate('name: '+n+'\n'+(n==='subagent'?'':'subagents: {extra: [subagent, leader], default: subagent}'),join(dir,n+'.yaml'))]));
   const ctx={cwd:join(dir,'project'),sessionManager:manager,modelRegistry:registry,model,thinkingLevel:'high',isIdle:()=>false,isProjectTrusted:()=>true};
   const received=[];
   const options={cwd:ctx.cwd,agentDir:join(dir,'agent'),trusted:true,config:{agent_paths:[],max_running:8,max_depth:4,max_group_depth:4,worker_exclude_extensions:[]},templates,identity,context:ctx,global:{model,thinking:'high'},append:(k,d)=>manager.appendCustomEntry(k,d),rootSend:(e)=>{received.push(e);manager.appendCustomMessageEntry('subagents.message.v1','Message from '+e.from+':\n'+e.message,true,e);manager.appendCustomEntry('subagents.delivery.v1',{envelope:e,delivered:true});},workerFactory:factory};
@@ -45,6 +45,20 @@ async function fixture({factory, disk=false, respond}={}) {
   const workspace=new Workspace(options);
   return {workspace,options,templates,dir,ctx,manager,received,requests,sdk,ai,runtime,setGate:g=>gate=g,cleanup:async()=>{await workspace.close(); previousAgentDir===undefined?delete process.env.PI_CODING_AGENT_DIR:process.env.PI_CODING_AGENT_DIR=previousAgentDir; await rm(dir,{recursive:true,force:true});}};
 }
+test('worker tool removals apply before registration and model declarations', async()=>{
+  const f=await fixture();
+  try {
+    f.templates.get('subagent').tools.extra=['-read','-edit','-write','-unknown'];
+    await f.workspace.create('main','restricted','check tools');
+    await until(()=>f.requests.length && !f.workspace.get('restricted').busy);
+    const tools=f.workspace.get('restricted').session.getActiveToolNames();
+    assert.ok(tools.includes('bash'));
+    for (const name of ['read','edit','write']) assert.ok(!tools.includes(name));
+    const declared=(f.ai.getCurrentSystemMessage(f.requests[0].messages).toolsAdded ?? []).map(tool=>tool.name);
+    for (const name of ['read','edit','write']) assert.ok(!declared.includes(name));
+  } finally {await f.cleanup();}
+});
+
 test('spawning workers receive allowed child descriptions in the actual request', async()=>{
   const f=await fixture();
   try {

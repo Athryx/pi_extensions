@@ -21,7 +21,7 @@ async function fixture({leaf=false, max=2, depth=4, groupDepth=4, factory, real=
   const manager = sdk.SessionManager.inMemory(dir);
   const identity={version:1,workspaceId:'group-workspace',instanceId:'main-instance',name:'main',template:'main',role:'interactive',parentName:null};
   manager.appendCustomEntry('subagents.identity.v1',identity);
-  const templates = new Map(['main','worker','leader','denied'].map(name=>[name,normalizeTemplate({name,tools:{include_defaults:false,extra:[]},skills:{include_defaults:false},subagents: name==='leader'||name==='main'&&!leaf ? {allowed:['worker','leader'],default:'worker'} : {allowed:[]}},join(dir,name+'.yaml'))]));
+  const templates = new Map(['main','worker','leader','denied'].map(name=>[name,normalizeTemplate({name,tools:{include_defaults:false,extra:[]},skills:{include_defaults:false},subagents: name==='leader'||name==='main'&&!leaf ? {extra:['worker','leader'],default:'worker'} : {extra:[]}},join(dir,name+'.yaml'))]));
   const context={cwd:dir,sessionManager:manager,modelRegistry:registry,model,thinkingLevel:'off',isIdle:()=>false};
   const received=[];
   const events=[];
@@ -44,7 +44,7 @@ if (require.main === module) {
     try {
       await f.workspace.create('main','ordinary','task'); await until(()=>!f.workspace.get('ordinary').busy);
       const run=workflowAgentsAPI(f.workspace,'main').openRun({sourcePath:join(f.dir,'test.js'),signal:new AbortController().signal});
-      await run.registerAgents([{name:'local',subagents:{allowed:['helper']}},{name:'helper'}]);
+      await run.registerAgents([{name:'local',subagents:{extra:['helper']}},{name:'helper'}]);
       const result=await run.agent('task','local',undefined,new AbortController().signal);
       const root=f.workspace.get(result.name);
       await f.workspace.create(result.name,'inside','task','helper'); await until(()=>!f.workspace.get('inside').busy);

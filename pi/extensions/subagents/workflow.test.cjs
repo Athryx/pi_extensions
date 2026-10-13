@@ -24,8 +24,8 @@ test('object/YAML parity, strict atomic registration, local precedence and immut
     assert.deepEqual(normalizeTemplate({name:'a',skills:{extra_paths:['./skill']}},join(f.dir,'a.yaml')),parseTemplate('name: a\nskills: {extra_paths: [./skill]}',join(f.dir,'a.yaml')));
     await assert.rejects(run.registerAgents([{name:'a'},{name:'bad',unknown:true}]),/unknown/);
     await assert.rejects(run.agent('task','a',undefined,signal()),/disallowed/);
-    await assert.rejects(run.registerAgents([{name:'a',subagents:{allowed:['denied']}}]),/disallowed/);
-    await run.registerAgents([{name:'worker',description:'Local worker',prompt:'Local shadows YAML',subagents:{include_defaults:true}},{name:'helper',description:'Local helper',subagents:{allowed:['worker']}}]);
+    await assert.rejects(run.registerAgents([{name:'a',subagents:{extra:['denied']}}]),/disallowed/);
+    await run.registerAgents([{name:'worker',description:'Local worker',prompt:'Local shadows YAML',subagents:{include_defaults:true}},{name:'helper',description:'Local helper',subagents:{extra:['worker']}}]);
     const first=await run.agent('task','worker',undefined,signal());
     const record=f.workspace.get(first.name);
     assert.equal(record.template.prompt,'Local shadows YAML');
@@ -47,6 +47,29 @@ test('object/YAML parity, strict atomic registration, local precedence and immut
     await assert.rejects(run.registerAgents([{name:'late'}]),/closed/);
   } finally {await f.cleanup();}
 });
+test('local registry modifiers subtract defaults, reject removed defaults and preserve resolved globals on restore',async()=>{
+  const {restoreRegistry,publicTemplate}=await load('workflow-agents.ts');
+  const snapshot={version:1,id:'00000000-0000-4000-8000-000000000001',sourcePath:'/tmp/workflow.js',globals:[{name:'global'}],definitions:[
+    {name:'local',subagents:{include_defaults:true,extra:['-helper','-unknown','-global','+global'],default:'global'}},
+    {name:'helper'},
+  ]};
+  const registry=restoreRegistry(snapshot), local=registry.templates.get('local');
+  assert.deepEqual(local.subagents.allowed,['local','global']);
+  assert.equal(local.subagents.default,'global');
+  assert.ok(Object.isFrozen(local.subagents.allowed));
+  assert.throws(()=>restoreRegistry({...snapshot,definitions:[
+    {name:'local',subagents:{include_defaults:true,extra:['-helper'],default:'helper'}},
+    {name:'helper'},
+  ]}),/default/);
+  const serialized=publicTemplate(local);
+  assert.deepEqual(serialized.subagents,{include_defaults:false,extra:['local','global'],default:'global'});
+  assert.equal(Object.hasOwn(serialized.subagents,'allowed'),false);
+  const restored=restoreRegistry({...snapshot,globals:[publicTemplate(registry.templates.get('global')),serialized],definitions:[{name:'helper'},{name:'later'}]});
+  assert.deepEqual(restored.templates.get('local').subagents.allowed,['local','global']);
+  assert.equal(restored.templates.get('local').subagents.include_defaults,false);
+  assert.ok(Object.isFrozen(restored.templates.get('local')));
+});
+
 test('global templates require caller permission, every launch isolated; unique long prefixes and final empty text',async()=>{
   const f=await fixture();
   try {
@@ -113,7 +136,7 @@ test('active cancellation rejects with usage and cancels ordinary owned descenda
   const controls={started:[],release:new Map()};const f=await fixture({max:4,factory:controlledFactory(controls)});
   try {
     await f.workspace.create('main','unrelated','task');
-    const run=await open(f);await run.registerAgents([{name:'root',subagents:{allowed:['helper']}},{name:'helper'}]);
+    const run=await open(f);await run.registerAgents([{name:'root',subagents:{extra:['helper']}},{name:'helper'}]);
     const cancel=new AbortController();const task=run.agent('task','root',undefined,cancel.signal);let error;
     const observed=task.catch(e=>{error=e;});
     await until(()=>controls.started.includes('root-1'));
@@ -137,7 +160,7 @@ test('settled roots retain scoped descendant ownership, cancellation acknowledge
     }};
   }});
   try {
-    const run=await open(f);await run.registerAgents([{name:'leader',subagents:{allowed:['helper']}},{name:'helper'}]);
+    const run=await open(f);await run.registerAgents([{name:'leader',subagents:{extra:['helper']}},{name:'helper'}]);
     const controller=new AbortController();const result=await run.agent('task','leader',undefined,controller.signal);
     assert.equal(f.workspace.get('helper-child').status,'running');assert.equal(result.usage.totalTokens,5);
     controller.abort();await run.cancelAgents(controller.signal);
@@ -172,13 +195,13 @@ test('local child depth limits reset across workflow groups, including workflows
   try {
     await f.workspace.create('main','ordinary-leader','task','leader');await until(()=>!f.workspace.get('ordinary-leader').busy);
     await assert.rejects(f.workspace.create('ordinary-leader','too-local','task','leader'),/agent nesting depth/);
-    const run=await open(f,'ordinary-leader');await run.registerAgents([{name:'local',subagents:{allowed:['helper']}},{name:'helper',subagents:{allowed:['helper']}}]);
+    const run=await open(f,'ordinary-leader');await run.registerAgents([{name:'local',subagents:{extra:['helper']}},{name:'helper',subagents:{extra:['helper']}}]);
     const root=await run.agent('task','local',undefined,signal());
     assert.equal(f.workspace.get(root.name).ownership.creationDepth,0);
     await f.workspace.create(root.name,'child','task','helper');await until(()=>!f.workspace.get('child').busy);
     assert.equal(f.workspace.get('child').ownership.creationDepth,1);
     await assert.rejects(f.workspace.create('child','grandchild','task','helper'),/agent nesting depth/);
-    const nested=await open(f,'child');await nested.registerAgents([{name:'reset',subagents:{allowed:['helper']}},{name:'helper'}]);
+    const nested=await open(f,'child');await nested.registerAgents([{name:'reset',subagents:{extra:['helper']}},{name:'helper'}]);
     const reset=await nested.agent('task','reset',undefined,signal());
     assert.equal(f.workspace.get(reset.name).ownership.creationDepth,0);
     await f.workspace.create(reset.name,'reset-child','task','helper');await until(()=>!f.workspace.get('reset-child').busy);
@@ -253,10 +276,10 @@ test('old cross-group ownership is validated and migrated in memory; new local m
   for(const legacy of [false,true,'mixed']) {
     const f=await fixture({depth:4,groupDepth:4});const {Workspace}=await load('workspace.ts');
     try {
-      const run=await open(f);await run.registerAgents([{name:'outer',subagents:{allowed:['helper']}},{name:'helper',subagents:{allowed:['helper']}}]);
+      const run=await open(f);await run.registerAgents([{name:'outer',subagents:{extra:['helper']}},{name:'helper',subagents:{extra:['helper']}}]);
       const outer=await run.agent('task','outer',undefined,signal());
       await f.workspace.create(outer.name,'child','task','helper');await until(()=>!f.workspace.get('child').busy);
-      const nested=await open(f,'child');await nested.registerAgents([{name:'inner',subagents:{allowed:['helper']}},{name:'helper'}]);
+      const nested=await open(f,'child');await nested.registerAgents([{name:'inner',subagents:{extra:['helper']}},{name:'helper'}]);
       const inner=await nested.agent('task','inner',undefined,signal());
       await f.workspace.create(inner.name,'deep-child','task','helper');await until(()=>!f.workspace.get('deep-child').busy);
       await nested.close();await run.close();await f.workspace.close();
@@ -329,7 +352,7 @@ test('real SDK child reports create owned root continuations; scoped cancellatio
     })();return stream;
   }});
   try {
-    const run=await open(f);await run.registerAgents([{name:'leader',tools:{include_defaults:false,extra:[]},skills:{include_defaults:false},subagents:{allowed:['helper']}},{name:'helper',tools:{include_defaults:false,extra:[]},skills:{include_defaults:false}}]);
+    const run=await open(f);await run.registerAgents([{name:'leader',tools:{include_defaults:false,extra:[]},skills:{include_defaults:false},subagents:{extra:['helper']}},{name:'helper',tools:{include_defaults:false,extra:[]},skills:{include_defaults:false}}]);
     const controller=new AbortController();const completion=await run.agent('root assigned','leader',undefined,controller.signal);
     const leader=f.workspace.get(completion.name),firstRunId=leader.runId;await until(()=>!leader.busy&&releaseFirst);releaseFirst();
     await until(()=>rootRequests===4&&secondHelperHeld);

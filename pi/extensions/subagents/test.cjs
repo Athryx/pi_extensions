@@ -77,12 +77,67 @@ test('strict YAML normalization and validation', async () => {
   assert.equal(p('name: worker\nselectable: false').selectable,false);
   assert.deepEqual(p('name: worker\nsubagents: {include_defaults: false, extra: [worker], default: worker}').subagents.allowed,['worker']);
   assert.equal(p('name: worker\nsubagents: {include_defaults: true, default: worker}').subagents.default,'worker');
-  for (const body of ['selectable: no','selectable: null','subagents: {include_defaults: null}','subagents: {include_defaults: yes}','subagents: {extra: worker}','subagents: {allowed: [], extra: []}','subagents: {allowed: [], include_defaults: true}']) assert.throws(()=>p('name: worker\n'+body));
+  for (const body of ['selectable: no','selectable: null','subagents: {include_defaults: null}','subagents: {include_defaults: yes}','subagents: {extra: worker}','subagents: {allowed: []}','subagents: {allowed: [worker]}','subagents: {allowed: [], extra: []}','subagents: {allowed: [], include_defaults: true}']) assert.throws(()=>p('name: worker\n'+body));
   assert.equal(p('name: worker\nmodel: {name: provider/model/with/slashes, thinking: high}').model.name, 'provider/model/with/slashes');
   assert.equal(p('name: worker\nskills: {extra_paths: [./skills]}').skills.extra_paths[0],'/tmp/agents/skills');
-  for (const body of ['name: worker\nname: duplicate','name: worker\nunknown: true','name: worker\nmodel: {foo: true}','name: worker\ntools: {extra: bash}','name: worker\nsubagents: {allowed: [], default: worker}','name: worker\nmodel: {thinking: huge}','name: worker\n---\nname: second','name: worker\nprompt: !unsafe text']) assert.throws(()=>p(body), undefined,body);
+  for (const body of ['name: worker\nname: duplicate','name: worker\nunknown: true','name: worker\nmodel: {foo: true}','name: worker\ntools: {extra: bash}','name: worker\nsubagents: {extra: [], default: worker}','name: worker\nmodel: {thinking: huge}','name: worker\n---\nname: second','name: worker\nprompt: !unsafe text']) assert.throws(()=>p(body), undefined,body);
   assert.throws(()=>p('name: worker\nprompt: ' + 'a'.repeat(140000)),/128 KiB/);
 });
+test('extra modifiers reject empty names and bare signs', async () => {
+  const {normalizeTemplate,parseTemplate} = await load('templates.ts');
+  for (const field of ['tools','subagents']) {
+    for (const modifier of ['', '+', '-', ' ', '+ ', '- ']) {
+      assert.throws(() => normalizeTemplate({name:'worker',[field]:{extra:[modifier]}}, '/tmp/worker.yaml'), undefined, field + ': ' + JSON.stringify(modifier));
+      assert.throws(() => parseTemplate('name: worker\n' + field + ': {extra: [' + JSON.stringify(modifier) + ']}', '/tmp/worker.yaml'));
+    }
+  }
+});
+
+test('tools.extra applies ordered additions and removals to default tools', async () => {
+  const {normalizeTemplate} = await load('templates.ts'), {loadout} = await load('loadout.ts');
+  const template = extra => normalizeTemplate({name:'leaf',tools:{extra}}, '/tmp/leaf.yaml');
+  assert.deepEqual(loadout(template(['-read','+read','-bash','find','+find','-find','+probe','-unknown']), undefined, 'main'), ['edit','write','read','probe']);
+  assert.deepEqual(loadout(template(['read','+bash']), undefined, 'main'), ['read','bash','edit','write']);
+  assert.deepEqual(loadout(template(['-probe','probe','-probe']), ['probe','read'], 'main'), ['read']);
+  const explicit = normalizeTemplate({name:'leaf',tools:{include_defaults:false,extra:['read','+bash','-read','read','-unknown']}}, '/tmp/leaf.yaml');
+  assert.deepEqual(loadout(explicit, ['edit','write'], 'main'), ['bash','read']);
+  const interactive = template(['-set_goal','-close_bash']);
+  assert.deepEqual(loadout(interactive, ['read'], 'main', ['set_goal','set_goal_status','close_bash']), ['read','set_goal_status']);
+});
+
+test('subagents.extra applies ordered additions and removals without defaults', async () => {
+  const {normalizeTemplate,parseTemplate} = await load('templates.ts');
+  const t = normalizeTemplate({name:'parent',subagents:{extra:['helper','+reviewer','-helper','helper','-unknown','+helper'],default:'helper'}}, '/tmp/parent.yaml');
+  assert.deepEqual(t.subagents.allowed, ['reviewer','helper']);
+  assert.equal(t.subagents.default,'helper');
+  assert.deepEqual(parseTemplate('name: parent\nsubagents: {extra: [helper, "-helper", "+reviewer"]}', '/tmp/parent.yaml').subagents.allowed, ['reviewer']);
+  assert.throws(() => normalizeTemplate({name:'parent',subagents:{extra:['helper','-helper'],default:'helper'}}, '/tmp/parent.yaml'), /default/);
+});
+
+test('discovery modifiers subtract discovered defaults and quarantine positive missing references', async () => {
+  const {discoverTemplates} = await load('templates.ts');
+  const dir = await mkdtemp(join(tmpdir(),'subagents-modifiers-'));
+  try {
+    for (const [file,body] of Object.entries({
+      'a.yaml': 'name: parent\nsubagents: {include_defaults: true, extra: ["-helper", "+helper", "-leaf", "-unknown"], default: helper}',
+      'b.yaml': 'name: helper',
+      'c.yaml': 'name: leaf',
+      'd.yaml': 'name: broken\nsubagents: {extra: ["+missing"]}',
+      'e.yaml': 'name: dependent\nsubagents: {extra: ["+broken"]}',
+      'f.yaml': 'name: excluded\nsubagents: {include_defaults: true, extra: ["-helper"], default: helper}',
+      'g.yaml': 'name: negative\nsubagents: {extra: ["-missing"]}',
+      'h.yaml': 'name: bare-missing\nsubagents: {extra: [missing]}',
+    })) await writeFile(join(dir,file),body);
+    const {templates,diagnostics} = await discoverTemplates([dir]);
+    assert.deepEqual([...templates.keys()], ['parent','helper','leaf','negative']);
+    assert.deepEqual(templates.get('parent').subagents.allowed, ['parent','negative','helper']);
+    assert.deepEqual(templates.get('negative').subagents.allowed, []);
+    assert.equal(templates.get('parent').subagents.default,'helper');
+    assert.match(diagnostics.join(' '), /missing child template/);
+    assert.match(diagnostics.join(' '), /default/);
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
 test('discovery precedence, quarantine and trusted config', async () => {
   const {discoverTemplates} = await load('templates.ts'), {loadConfig} = await load('config.ts');
   const dir = await mkdtemp(join(tmpdir(),'subagents-config-'));
@@ -131,7 +186,7 @@ test('default child permissions expand after precedence and transitive quarantin
 });
 test('child catalog uses only allowed templates and optional descriptions', async () => {
   const {promptIdentity,templateLabel} = await load('loadout.ts'), {normalizeTemplate} = await load('templates.ts');
-  const parent = normalizeTemplate({name:'parent',subagents:{allowed:['reviewer','helper'],default:'reviewer'}}, '/tmp/parent.yaml');
+  const parent = normalizeTemplate({name:'parent',subagents:{extra:['reviewer','helper'],default:'reviewer'}}, '/tmp/parent.yaml');
   const templates = new Map([
     ['reviewer',normalizeTemplate({name:'reviewer',description:'Reviews\n changes',selectable:false}, '/tmp/reviewer.yaml')],
     ['helper',normalizeTemplate({name:'helper'}, '/tmp/helper.yaml')],

@@ -9,8 +9,10 @@ tools:
   extra: [workflow]
 skills:
   include_defaults: true
+  extra_paths: [./dynamic-workflows]
 subagents:
-  allowed: [subagent]
+  include_defaults: false
+  extra: [+subagent]
   default: subagent
 prompt: |
   Utilize dynamic workflows and subagents extensively to divide up work and tasks.

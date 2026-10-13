@@ -5,6 +5,7 @@ import { WORKFLOW_AGENTS_REQUEST } from "../shared/workflow-agents";
 import type { WorkflowAgentsAPI, WorkflowAgentsRequest, WorkflowAgentRun } from "../shared/workflow-agents";
 import { normalizeTemplate, validName } from "./templates";
 import { object } from "./config";
+import { applyModifiers } from "./modifiers";
 import { groupId } from "./groups";
 import type { Template, WorkflowRegistry, WorkflowRegistrySnapshot } from "./types";
 import type { Workspace } from "./workspace";
@@ -15,7 +16,7 @@ function freeze<T>(value: T): T {
 }
 export function publicTemplate(t: Template): unknown {
   return {name: t.name, ...(t.description !== undefined ? {description: t.description} : {}), selectable: t.selectable, model: t.model, tools: t.tools, skills: t.skills, prompt: t.prompt,
-    subagents: {allowed: t.subagents.allowed, ...(t.subagents.default ? {default: t.subagents.default} : {})}};
+    subagents: {include_defaults: false, extra: t.subagents.allowed, ...(t.subagents.default ? {default: t.subagents.default} : {})}};
 }
 /** Re-normalize snapshots, never trust internal permission metadata from session JSON. */
 export function restoreRegistry(raw: unknown): WorkflowRegistry {
@@ -37,10 +38,10 @@ export function restoreRegistry(raw: unknown): WorkflowRegistry {
   }
   const templates = new Map([...globals, ...locals]);
   for (const template of locals.values()) {
-    for (const name of [...template.subagents.extra, ...(template.subagents.default ? [template.subagents.default] : [])]) {
+    for (const name of [...applyModifiers([], template.subagents.extra), ...(template.subagents.default ? [template.subagents.default] : [])]) {
       if (!templates.has(name)) throw new Error("Missing or disallowed child template: " + name);
     }
-    template.subagents.allowed = [...new Set([...(template.subagents.include_defaults ? templates.keys() : []), ...template.subagents.extra])];
+    template.subagents.allowed = applyModifiers(template.subagents.include_defaults ? templates.keys() : [], template.subagents.extra);
   }
   for (const t of templates.values()) freeze(t);
   return {snapshot: freeze(structuredClone(data) as unknown as WorkflowRegistrySnapshot), templates, localNames: new Set(locals.keys())};
