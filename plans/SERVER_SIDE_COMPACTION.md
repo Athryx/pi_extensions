@@ -1,6 +1,8 @@
 ## Goal Description
 
-Implement a project-local extension at `.pi/extensions/server-side-compaction/` that selects either standard Pi compaction or the OpenAI compaction endpoint, without changing Pi's installation or core.
+Implement a project-local extension at `pi/extensions/server-side-compaction/` that selects either standard Pi compaction or the OpenAI compaction endpoint, without changing Pi's installation or core.
+
+Implementation completed in that directory. Serialization and readable summarization are separate `serialize.ts` / `summarize.ts` modules; switch orchestration is consolidated in `index.ts` rather than a separate `switch.ts`. Installed public SDK root compatibility exports are used instead of unsupported deep API aliases. See [walkthrough](walkthrough.md#server-side-compaction) for actual deterministic/terminal results and remaining live-endpoint limitations.
 
 Default policy is `auto`: supported OpenAI Responses and OpenAI Codex models use server compaction; other providers/APIs use ordinary Pi compaction. Users can configure defaults and switch the backend within an existing thread. The extension participates in Pi's existing manual `/compact`, automatic threshold compaction, and overflow recovery; it does not introduce a second compaction scheduler.
 
@@ -11,6 +13,7 @@ Default policy is `auto`: supported OpenAI Responses and OpenAI Codex models use
 - Unsupported models and endpoint errors fall back to Pi with a visible notice.
 - Changing the backend changes the **next** compaction, not the current checkpoint.
 - Server compaction follows Pi's existing trigger, preparation, cut point, and recent-tail retention. Replace only generation of the older-prefix readable summary with an endpoint-generated encrypted checkpoint bundle; do not adopt Codex's user-only/64k retention or full-conversation replacement.
+- Send the chosen older prefix as original structured provider input, without regular Pi summarization preprocessing: no conversation-to-text serialization, 2,000-character tool-result truncation, synthetic summarization prompt, or lossy rewriting. Preserve request-prefix fidelity where the endpoint contract permits, to avoid unnecessary potential cache misses. Shared generation/compaction KV-cache reuse is unverified and is not guaranteed.
 - Normal server compaction does not also generate a Pi summary.
 - Lazily reconstruct readable history when a subsequent Pi compaction needs it.
 - When switching to an incompatible model while the active context depends on encrypted compaction, show a confirmation explaining that portable compaction is necessary. Accept converts and switches; cancel retains the previous model.
@@ -67,7 +70,7 @@ No remaining user-facing requirement questions. Implementation investigations wi
 
 ### 1. Configuration and policy
 
-#### [NEW] `.pi/extensions/server-side-compaction/config.ts`
+#### [NEW] `pi/extensions/server-side-compaction/config.ts`
 
 Read optional extension-owned files:
 
@@ -93,7 +96,7 @@ Precedence: active branch command override > merged exact-model override > merge
 
 Do not allow arbitrary credential-bearing endpoint URLs in the initial version. Use the selected model's configured base URL only through an explicitly supported adapter; unknown hosts/APIs default to Pi. No secrets in configuration or persisted state.
 
-#### [NEW] `.pi/extensions/server-side-compaction/state.ts`
+#### [NEW] `pi/extensions/server-side-compaction/state.ts`
 
 Persist mode changes using `pi.appendEntry("server-side-compaction.mode.v1", { mode })`. Reconstruct from the active branch on startup, switch/fork/tree navigation, and reload. `/compaction reset` appends a reset record rather than resurrecting an older override.
 
@@ -125,11 +128,13 @@ Account fingerprint must not contain the access token. Validate checkpoint versi
 
 ### 2. OpenAI endpoint and serialization adapter
 
-#### [NEW] `.pi/extensions/server-side-compaction/openai.ts`
+#### [NEW] `pi/extensions/server-side-compaction/openai.ts`
 
 - Identify supported provider/API pairs and derive API-key/Codex compaction URLs without duplicate `/responses` suffixes.
 - Resolve fresh credentials and headers with `ctx.modelRegistry.getApiKeyAndHeaders(model)`. Preserve appropriate model/auth headers. For Codex, apply account/originator headers according to the verified provider contract; never copy or edit auth.json.
-- Serialize messages through the installed public Responses serializer rather than writing a lossy text-only converter. Respect images, reasoning, tool-call IDs/results, system checkpoints, provider transforms, and grammar/custom-tool behavior supported by the adapter.
+- Build the selected prefix through the same public Responses serialization path/options used for generation, rather than Pi's regular summarization serialization or a lossy converter. Preserve original content, message ordering, tool-call IDs/results, complete tool outputs, image representations, reasoning signatures, prior encrypted items, and system checkpoints. Do not add text labels, synthesize a readable-summary wrapper, reformat tool arguments, or apply regular compaction's tool-result truncation. Fidelity is to the effective provider-visible projection, including legitimate context edits/provider normalization, not excluded raw session entries.
+- Where public hooks permit, compare the generated prefix against the corresponding finalized generation payload prefix. Capture only bounded in-memory request data if needed; do not persist duplicate full transcripts or blindly reuse stale captured requests after context/model/tool changes. Keep current system/instructions placement and supported cache-routing fields aligned with generation where the compaction contract permits. Omit unsupported fields instead of claiming byte-identical whole-request payloads across different APIs.
+- Do not silently trim or rewrite an oversized prefix in server mode. If it cannot fit the endpoint's supported budget, visibly fall back to regular Pi compaction. Fallback/portability conversion may use normal readable-summary preprocessing; the fidelity requirement applies to server-compaction requests.
 - Send only compaction-contract fields, principally `model`, `input`, and `instructions`. Do not blindly send generation-only `tools`, streaming, `store`, or output-token options.
 - Combine event cancellation and timeout. Cancellation cancels the operation; it is not an endpoint failure that should start another model call.
 - Reject redirects, bound body reads, check status, parse and validate JSON/output/usage, and retain the **entire ordered output**, not just encrypted content. Never decode or summarize ciphertext as text.
@@ -152,7 +157,7 @@ const response = await fetch(adapter.compactUrl(model), {
 
 ### 3. Compaction checkpoints, projection, and lazy reconstruction
 
-#### [NEW] `.pi/extensions/server-side-compaction/checkpoint.ts`
+#### [NEW] `pi/extensions/server-side-compaction/checkpoint.ts`
 
 Use Pi's existing preparation/cut point to compact the discarded prefix while retaining recent messages **unchanged**. Honor the effective `keepRecentTokens`, reserve settings, active branch/context edits, manual instructions, and automatic/overflow lifecycle. Do not send the retained tail to the endpoint, let the endpoint choose Pi's kept boundary, apply Codex's 64k user-message retention, or replace the entire conversation.
 
@@ -195,7 +200,7 @@ If the readable history exceeds the summarizer's input budget, summarize ordered
 
 For immediate portability conversion, persist a `server-side-compaction.portable.v1` custom entry keyed to the encrypted checkpoint ID, containing a real readable summary, source anchors, and conversion usage/accounting metadata. Use `context_with_system` to replace that active checkpoint summary with the portable text while preserving the leading system message. Suppress encrypted injection for that converted checkpoint. Later compaction consumes this portable summary normally. This works even when stock `/compact` would reject an already-compacted session. Do not mutate session manager internals to force a new native entry.
 
-Verify usage persistence with supported usage entry APIs or boundary entries; do not double-count conversion usage or misrepresent it as free.
+Approved implementation limitation: Pi exposes no standalone usage-append API. Record immediate portability/model-switch conversion usage exactly once in the portable custom message's `details.usage` and show an accounting notice; this usage does **not** enter Pi native cost totals. Regular server/native compaction usage still enters native totals through `CompactionResult.usage`. Do not describe standalone conversion as free.
 
 ```mermaid
 flowchart TD
@@ -215,7 +220,7 @@ flowchart TD
 
 ### 4. Commands, lifecycle, and model-switch confirmation
 
-#### [NEW] `.pi/extensions/server-side-compaction/index.ts`
+#### [NEW] `pi/extensions/server-side-compaction/index.ts`
 
 Register:
 
@@ -248,7 +253,7 @@ pi.on("session_before_compact", async (event, ctx) => {
 
 Fallback summarization errors are surfaced, not caught as another endpoint error or recursively retried.
 
-#### [NEW] `.pi/extensions/server-side-compaction/switch.ts`
+#### [NEW] `pi/extensions/server-side-compaction/switch.ts`
 
 Implement a serialized transition state machine:
 
@@ -270,15 +275,15 @@ Encrypted items buried under a later readable compaction or on an abandoned bran
 
 ### 5. Documentation and tests
 
-#### [NEW] `.pi/extensions/server-side-compaction/README.md`
+#### [NEW] `pi/extensions/server-side-compaction/README.md`
 
 Document defaults, full configuration precedence/schema, commands, supported providers/APIs, endpoint availability, fallback, ciphertext persistence/privacy, lazy portability conversion and cost, headless behavior, disabling/uninstalling caveat, and how to recover by navigating original history if source reconstruction fails.
 
-#### [NEW] `.pi/extensions/server-side-compaction/test.cjs`
+#### [NEW] `pi/extensions/server-side-compaction/test.cjs`
 
 Pure policy/config/state tests, strict parsing, checkpoint validation, URL/auth assembly, output ordering, reconstruction, safe errors, abort/timeout/body-size limits, and conversion chunking.
 
-#### [NEW] `.pi/extensions/server-side-compaction/lifecycle.test.cjs`
+#### [NEW] `pi/extensions/server-side-compaction/lifecycle.test.cjs`
 
 Installed-host loader/SDK tests with deterministic fake providers and endpoint fetch mocks. Cover manual, threshold and overflow compaction; exact outgoing serialized inputs; ordinary Pi pass-through; server/Pi switching; repeated compaction; resume/fork/tree; confirmation accept/cancel/failure; scoped cycling; operation reentrancy; missing history; edits; tool groups; image and prompt/tool changes; nested requests; incompatible restores; headless refusal; and conversion after an already-compacted leaf.
 
@@ -312,9 +317,9 @@ No Pi core patch, monkey-patching global provider prototypes, new scheduler, or 
 After implementation approval:
 
 ```bash
-node --test .pi/extensions/server-side-compaction/test.cjs .pi/extensions/server-side-compaction/lifecycle.test.cjs
+node --test pi/extensions/server-side-compaction/test.cjs pi/extensions/server-side-compaction/lifecycle.test.cjs
 node --test tests/pi-compatibility.cjs
-node --test .pi/extensions/*/test.cjs .pi/extensions/*/*.test.cjs tests/pi-compatibility.cjs tests/smoke.test.cjs
+node --test pi/extensions/*/test.cjs pi/extensions/*/*.test.cjs tests/pi-compatibility.cjs tests/smoke.test.cjs
 ```
 
 Use installed-host loading via the repository's existing jiti/loader pattern as the extension compilation/load check; do not invent a root npm build command. Tests use temporary sessions and fake credentials/providers, never billable real calls by default.
@@ -327,6 +332,8 @@ Critical assertions:
 - Endpoint input excludes the retained recent tail and includes the previous summary/checkpoint plus the complete discarded prefix, including split-span prefixes, exactly once.
 - Endpoint-preserved older user messages are replayed with the encrypted item, not discarded or duplicated. Repeated compaction correctly feeds the previous bundle back into the next prefix request.
 - Ordinary server compaction performs one endpoint request and no additional readable-summary model call; unsupported/failure fallback and explicit portability conversion are exceptions.
+- Server input structurally matches the corresponding generation prefix under the same provider normalization: tool outputs exceeding 2,000 characters remain intact, original structured arguments/signatures/images are preserved, and no regular Pi summary prompt or conversation-to-text formatting is introduced.
+- Oversized-prefix handling falls back visibly rather than silently truncating original content. Cache keys/routing fields are forwarded only when supported; no cache-hit guarantee is asserted. Any optional live cache check reports actual returned cached-token usage rather than inferred KV-cache reuse.
 - Server-to-Pi backend selection causes no immediate conversion or checkpoint change.
 - Next Pi compaction sees actual reconstructed text, never ciphertext/placeholder.
 - Endpoint failure with an encrypted previous checkpoint still produces a semantic Pi summary.

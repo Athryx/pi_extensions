@@ -88,10 +88,14 @@ test('workflow loads against the installed host with strict directed-only orches
   assert.throws(() => validateToolArguments(tool, {name: 'workflow', arguments: {path: 'example.js', group: 'root'}}), /Validation failed/);
 });
 
-test('dynamic-workflows skill is discoverable through the public skill loader', async () => {
-  const {loadSkills} = await host('dist/index.js');
-  const result = loadSkills({cwd, agentDir: '/nonexistent/pi-workflow-skill-test', includeDefaults: false, skillPaths: [join(cwd, 'skills/dynamic-workflows')]});
-  assert.equal(result.skills.length, 1);
-  assert.equal(result.skills[0].name, 'dynamic-workflows');
-  assert.deepEqual(result.diagnostics, []);
+test('server-side compaction loads against the installed public host API without model tools', async () => {
+  const {loadExtensions} = await host('dist/core/extensions/loader.js');
+  const {extensions, errors} = await loadExtensions([join(cwd, 'pi/extensions/server-side-compaction/index.ts')], cwd);
+  assert.deepEqual(errors, []);
+  const extension = extensions[0];
+  assert.ok(extension.commands.has('compaction'));
+  assert.equal(extension.tools.size, 0);
+  for (const event of ['session_before_compact', 'before_provider_request', 'model_select', 'context_with_system', 'session_shutdown']) {
+    assert.ok(extension.handlers.has(event), event);
+  }
 });

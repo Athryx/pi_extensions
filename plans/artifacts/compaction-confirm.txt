@@ -1,0 +1,38 @@
+
+ Readable synthetic summary: the secret fact is BLUEBIRD. No paid calls.
+
+
+ [compaction]
+
+ Compacted from 15 tokens (ctrl+o to expand)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Compaction required to switch model
+ This thread contains an OpenAI encrypted checkpoint the target model cannot read. Convert it to a readable
+ summary (one or more model calls) and switch? Cancel keeps the previous model. Conversion usage is recorded
+ separately from Pi native cost totals.
+
+ → Yes
+   No
+
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/pi-compaction-smoke-vQzSom/project
+↑30 ↓15 ?/32k                                                                                   (openai) smoke
+compact: auto → server

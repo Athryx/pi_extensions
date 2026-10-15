@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="807" viewBox="0 0 1100 807"><title>Actual tmux text rendered as SVG — compaction confirm; not a pixel screenshot</title><rect width="100%" height="100%" fill="#161b22"/><text x="16" y="26" fill="#8b949e" font-family="monospace" font-size="13">Actual tmux text rendered as SVG — confirm — deterministic fake provider; not a screenshot</text><g fill="#e6edf3" font-family="monospace" font-size="15" xml:space="preserve"><text x="16" y="58"></text>
+<text x="16" y="77"> Readable synthetic summary: the secret fact is BLUEBIRD. No paid calls.</text>
+<text x="16" y="96"></text>
+<text x="16" y="115"></text>
+<text x="16" y="134"> [compaction]</text>
+<text x="16" y="153"></text>
+<text x="16" y="172"> Compacted from 15 tokens (ctrl+o to expand)</text>
+<text x="16" y="191"></text>
+<text x="16" y="210"></text>
+<text x="16" y="229"></text>
+<text x="16" y="248"></text>
+<text x="16" y="267"></text>
+<text x="16" y="286"></text>
+<text x="16" y="305"></text>
+<text x="16" y="324"></text>
+<text x="16" y="343"></text>
+<text x="16" y="362"></text>
+<text x="16" y="381"></text>
+<text x="16" y="400"></text>
+<text x="16" y="419"></text>
+<text x="16" y="438"></text>
+<text x="16" y="457"></text>
+<text x="16" y="476">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16" y="495"></text>
+<text x="16" y="514"> Compaction required to switch model</text>
+<text x="16" y="533"> This thread contains an OpenAI encrypted checkpoint the target model cannot read. Convert it to a readable</text>
+<text x="16" y="552"> summary (one or more model calls) and switch? Cancel keeps the previous model. Conversion usage is recorded</text>
+<text x="16" y="571"> separately from Pi native cost totals.</text>
+<text x="16" y="590"></text>
+<text x="16" y="609"> → Yes</text>
+<text x="16" y="628">   No</text>
+<text x="16" y="647"></text>
+<text x="16" y="666"> ↑↓ navigate  enter select  escape/ctrl+c cancel</text>
+<text x="16" y="685"></text>
+<text x="16" y="704">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16" y="723">/tmp/pi-compaction-smoke-vQzSom/project</text>
+<text x="16" y="742">↑30 ↓15 ?/32k                                                                                   (openai) smoke</text>
+<text x="16" y="761">compact: auto → server</text></g></svg>

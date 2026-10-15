@@ -198,3 +198,56 @@ The following SVGs are **terminal text snapshots captured from that real TUI run
 - Live OAuth/subscription providers, real MCP transports, provider-specific retry/overflow recovery, RPC clients, regular-mode terminal rendering, and Windows/macOS have **not** been end-to-end validated. Delayed tool registration is tested with a local synthetic extension, not a remote MCP server.
 
 Run `/reload` in the main Pi instance to load the new extension, then use `/agent` or `/agents`.
+
+## Server-side compaction
+
+Implemented in `pi/extensions/server-side-compaction/`, without Pi core changes or new installed dependencies.
+
+- `/compaction auto|pi|server|reset` selects the next backend per branch. Pi still owns manual/automatic/overflow triggers, cut points and unchanged recent-tail retention.
+- Supported official OpenAI Responses/Codex adapters send only the original provider-normalized older prefix: full tool results, structured arguments, images, reasoning signatures and prior checkpoint bundles, not Pi's readable summarization prompt or truncated text.
+- Persist and replay the complete ordered endpoint output, including preserved user messages. Endpoint/unsupported/budget failures fall back visibly to native readable compaction; cancellation does not start fallback.
+- `/compaction portable` lazily reconstructs readable source context, saves a model-visible portable record, and works after disabling the extension. Incompatible interactive model switches offer conversion/cancel; headless workers never open dialogs or implicitly accept conversion cost.
+- Request-time guards fail closed for stale/incompatible/corrupt checkpoints and concurrent conversion. The poison payload deliberately permits Promise `then` assimilation so Pi's fail-open hook runner cannot swallow the guard before provider serialization.
+- Strict trusted configuration, refresh-safe credential lookup, bounded official-host requests, branch-local state and worker isolation are documented in the extension README.
+
+### Validation
+
+Deterministic installed-SDK tests cover endpoint/auth/limits, lossless prefix serialization (including a 12KB tool result), ordered replay, disk resume/sibling branches, native automatic threshold and overflow recovery, endpoint fallback, conversion error/cancellation, stale model authentication, missing portable anchors, routed-model rejection, and real subagents. Real OpenAI/Codex serializers are exercised with transport blocked.
+
+```sh
+node --test pi/extensions/server-side-compaction/test.cjs pi/extensions/server-side-compaction/*.test.cjs
+node pi/extensions/server-side-compaction/check-types.cjs
+npm --prefix pi/extensions/subagents run check
+npm --prefix pi/extensions/workflow run check
+node --test pi/extensions/*/test.cjs pi/extensions/*/*.test.cjs tests/*.cjs
+git diff --check
+```
+
+Final results: **261/261 repository tests passed** (including **40 server-side-compaction tests**). Strict server-side-compaction, subagents and workflow type checks passed; `git diff --check` passed. No dependencies were installed and no paid model calls were made.
+
+The obsolete `dynamic-workflows` skill discovery test was removed from `tests/pi-compatibility.cjs` at the user's request: the referenced skill is absent from this checkout. The remaining installed-host tests include loading the new extension and checking its commands/hooks.
+
+### Real terminal evidence
+
+A disposable tmux/Pi CLI session used only synthetic providers and a mocked compaction endpoint. Two prompts, `/compact`, then `/smoke-target` exercised the actual confirmation dialog. Escape retained `openai/smoke` with zero portable records; accept saved one readable portable record and selected `smoke-target/smoke`. The tmux server was stopped afterward. Reproduce the isolated fixture with `node pi/extensions/server-side-compaction/smoke.cjs`; no global configuration is changed.
+
+These SVGs are **actual tmux pane text captures rendered as SVG**, not screenshots or evidence of a live external provider. Raw captures are adjacent.
+
+![Compaction conversion confirmation](artifacts/compaction-confirm.svg)
+
+[Raw confirmation](artifacts/compaction-confirm.txt)
+
+![Cancel retains compatible model](artifacts/compaction-cancel.svg)
+
+[Raw cancellation](artifacts/compaction-cancel.txt)
+
+![Accept saves readable context and switches](artifacts/compaction-accept.svg)
+
+[Raw acceptance](artifacts/compaction-accept.txt)
+
+### Explicit limitations
+
+- No paid/live endpoint calls were made. Official API-key/Codex unary endpoint availability and cache reuse remain unverified; the newer Codex streamed compaction-trigger protocol is not implemented.
+- Standalone portability/model-switch summary usage is stored once in `details.usage` with a notice, **not Pi native cost totals**, as explicitly approved. Regular compaction usage uses native `CompactionResult.usage`.
+- Run `/compaction portable` **before disabling the extension**. Disabling without conversion loses the encrypted prefix from stock Pi's model context, although original session history remains on disk.
+- Missing source anchors, modified/deleted portable records and indivisible oversized tool groups fail safely rather than inventing context. Third-party request transformations and transport overrides are not generally interchangeable with the official adapters.

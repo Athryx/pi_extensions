@@ -1,0 +1,38 @@
+
+ Readable synthetic summary: the secret fact is BLUEBIRD. No paid calls.
+
+
+ [compaction]
+
+ Compacted from 15 tokens (ctrl+o to expand)
+
+
+ Effective model: openai/smoke; encrypted checkpoints: 1; portable records: 0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/pi-compaction-smoke-vQzSom/project
+↑30 ↓15 ?/32k                                                                                   (openai) smoke
+compact: auto → server
