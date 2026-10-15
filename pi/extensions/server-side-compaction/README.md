@@ -74,7 +74,7 @@ Authentication uses Pi's fresh credential resolver; never copies auth.json. Toke
 
 The extension works in ordinary workers and isolated workflow roots when loaded there, unless excluded through worker extension settings. State and asynchronous operations are factory/session-local. Worker automatic compaction is headless; it never opens confirmation dialogs or implicitly accepts conversion cost. Incompatible worker/headless model changes restore the compatible model when available; request-time guards block incompatible replay otherwise. Explicit `/compaction portable` can be used by a headless client before switching.
 
-TUI displays a small `compact: <mode> → <backend>` status. TUI/RPC notifications report status/fallback. Without UI, notices are stored as non-context `server-side-compaction.notice.v1` session entries, avoiding prompt pollution and stdout protocol corruption.
+TUI appends a grey `• server compaction (auto)`, `• pi compaction (auto)`, `• server compaction (override)` or `• pi compaction (override)` beside the native model/effort display. `auto` means automatic policy; explicit `pi`/`server` selection is an override. The label describes the next backend selected by policy (individual endpoint failures can still fall back). On narrow terminals it hides instead of truncating the native stats/model. No separate status row is added. TUI/RPC notifications report status/fallback. Without UI, notices are stored as non-context `server-side-compaction.notice.v1` session entries, avoiding prompt pollution and stdout protocol corruption.
 
 ## Verification
 

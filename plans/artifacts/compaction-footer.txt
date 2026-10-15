@@ -1,0 +1,35 @@
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+ Next compaction policy updated; the current checkpoint is unchanged.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/pi-compaction-smoke-99Frda/project
+0.0%/32k                                                                                                                                   (openai) smoke • pi compaction (override)

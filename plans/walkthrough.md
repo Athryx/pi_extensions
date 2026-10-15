@@ -251,3 +251,9 @@ These SVGs are **actual tmux pane text captures rendered as SVG**, not screensho
 - Standalone portability/model-switch summary usage is stored once in `details.usage` with a notice, **not Pi native cost totals**, as explicitly approved. Regular compaction usage uses native `CompactionResult.usage`.
 - Run `/compaction portable` **before disabling the extension**. Disabling without conversion loses the encrypted prefix from stock Pi's model context, although original session history remains on disk.
 - Missing source anchors, modified/deleted portable records and indivisible oversized tool groups fail safely rather than inventing context. Third-party request transformations and transport overrides are not generally interchangeable with the official adapters.
+
+### Footer follow-up
+
+Replaced the separate compaction status line with a grey suffix beside the native model/effort: `server compaction (auto)`, `pi compaction (auto)`, `server compaction (override)`, or `pi compaction (override)`, separated by `•`. The reversible instance-only adapter preserves native cost/model/provider rows and other footer adapters, hides when padding is insufficient, and caches unchanged row transformations without repeatedly traversing conversation history.
+
+**47/47** feature and installed-host compatibility tests passed, including footer labels, width, theme/content invalidation, unchanged frames, cleanup and adapter coexistence. Strict type check and diff check passed. A fresh disposable real Pi/tmux run confirmed `server compaction (auto)` at bottom right, then `/compaction pi` changed it to `pi compaction (override)` with no extra status row. [Raw terminal capture](artifacts/compaction-footer.txt). No live endpoint calls; tmux server stopped.

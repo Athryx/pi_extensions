@@ -9,6 +9,7 @@ const paths = {
   '@earendil-works/pi-coding-agent':[join(root,'dist/index.d.ts')],
   '@earendil-works/pi-ai':[join(root,'node_modules/@earendil-works/pi-ai/dist/compat.d.ts')],
   '@earendil-works/pi-agent-core':[join(root,'node_modules/@earendil-works/pi-agent-core/dist/index.d.ts')],
+  '@earendil-works/pi-tui':[join(root,'node_modules/@earendil-works/pi-tui/dist/index.d.ts')],
 };
 try {
   writeFileSync(join(temp,'tsconfig.json'),JSON.stringify({compilerOptions:{noEmit:true,strict:true,skipLibCheck:true,target:'ES2023',module:'ESNext',moduleResolution:'Bundler',allowImportingTsExtensions:true,types:['node'],typeRoots:[resolve(__dirname,'../subagents/node_modules/@types')],paths},include:[join(__dirname,'*.ts'),resolve(__dirname,'../shared/agent-role.ts')]}));

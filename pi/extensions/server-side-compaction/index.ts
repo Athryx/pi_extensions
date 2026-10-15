@@ -8,6 +8,7 @@ import { getMode, MODE_ENTRY, PORTABLE_ENTRY } from "./state.ts";
 import { CompactionEndpointError, compactPrefix, compareCompatibility, getAdapter, resolveCompactionAuth, type Compatibility } from "./openai.ts";
 import { assertPrefixBudget, blockedPayload, replay, serializePrefix, type Payload } from "./serialize.ts";
 import { compactReadable, readableSummary } from "./summarize.ts";
+import { CompactionFooter, compactionLabel } from "./footer.ts";
 
 const NOTICE = "server-side-compaction.notice.v1";
 // Provider failures are untrusted even when prefixed with a familiar word.
@@ -24,6 +25,8 @@ export default function (pi: ExtensionAPI) {
   let switchRevision = 0;
   let switching = false;
   let guardError: string | undefined;
+  let footer: CompactionFooter | undefined;
+  let footerLabel = "";
 
   function notice(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info") {
     if (ctx.hasUI) ctx.ui.notify(message, level);
@@ -33,7 +36,8 @@ export default function (pi: ExtensionAPI) {
   function render(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
     const selected = resolvePolicy(ctx.model, config, getMode(ctx.sessionManager.getBranch()));
-    ctx.ui.setStatus("server-side-compaction", `compact: ${selected.mode} → ${selected.backend}`);
+    footerLabel = compactionLabel(selected.backend, selected.mode);
+    footer?.refresh();
   }
   const cancelOperation = () => {
     epoch++; switchRevision++; switching = false; operation?.abort(); operation = undefined;
@@ -47,6 +51,15 @@ export default function (pi: ExtensionAPI) {
     config = loaded.config;
     for (const warning of loaded.warnings) notice(ctx, warning, "warning");
     render(ctx);
+    if (ctx.mode === "tui") {
+      footer?.dispose();
+      ctx.ui.setStatus("server-side-compaction", undefined);
+      ctx.ui.setWidget("server-side-compaction-footer", tui => {
+        const adapter = new CompactionFooter(tui, () => ctx.ui.theme.fg("dim", ` • ${footerLabel}`));
+        footer = adapter;
+        return { render: () => { adapter.attach(); return []; }, invalidate() {}, dispose: () => { adapter.dispose(); if (footer === adapter) footer = undefined; } };
+      }, { placement: "belowEditor" });
+    }
   }
   async function compatible(ctx: ExtensionContext, model: Model<Api> | undefined, key: Compatibility): Promise<boolean> {
     if (!model || !getAdapter(model)) return false;
@@ -120,7 +133,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_fork", () => { cancelOperation(); });
   pi.on("session_before_tree", () => { cancelOperation(); });
   pi.on("session_tree", (_event, ctx) => restore(ctx));
-  pi.on("session_shutdown", (_event, ctx) => { cancelOperation(); if (ctx.mode === "tui") ctx.ui.setStatus("server-side-compaction", undefined); });
+  pi.on("session_shutdown", (_event, ctx) => {
+    cancelOperation(); footer?.dispose(); footer = undefined;
+    if (ctx.mode === "tui") { ctx.ui.setStatus("server-side-compaction", undefined); ctx.ui.setWidget("server-side-compaction-footer", undefined); }
+  });
 
   pi.on("context_with_system", (event, ctx) => {
     guardError = undefined;
