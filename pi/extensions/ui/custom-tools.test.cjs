@@ -249,6 +249,58 @@ test('received-message fallback is restricted to the known custom type and prese
   } finally { view.dispose(); }
 });
 
+test('native searches and page opens render as compact blue tool rows without treating source hits as page views', async () => {
+  const api = await ready;
+  const { chat, view } = scene(api);
+  const details = freeze({ mode: 'live', outcome: 'completed', actions: ['old mixed descriptions'], operations: [
+    { type: 'search', query: 'latest Linux release', status: 'completed' },
+    { type: 'search', query: 'release notes', status: 'completed' },
+    { type: 'open_page', url: 'https://kernel.org/releases.html', status: 'completed' },
+    { type: 'find_in_page', url: 'https://kernel.org/releases.html', pattern: 'stable', status: 'completed' },
+  ], sources: [{ title: 'Unopened result', url: 'https://unopened.example/' }] });
+  const row = message(api, details, 'Native source summary', 'codex-web-search.results.v1');
+  const native = row.render(120), snapshot = structuredClone(row.message);
+  chat.addChild(row);
+  try {
+    const lines = chat.render(120);
+    assert.deepEqual(plain(lines), ['', ' searched latest Linux release', '', ' searched release notes', '',
+      ' viewed web page https://kernel.org/releases.html', '', ' searched web page https://kernel.org/releases.html · stable']);
+    assert.ok(lines[1].includes(api.themes.theme.fg('mdLink', api.themes.theme.bold('searched'))));
+    assert.ok(lines[5].includes(api.themes.theme.fg('mdLink', api.themes.theme.bold('viewed web page'))));
+    assert.doesNotMatch(flattened(lines), /unopened|Native source summary|old mixed descriptions|codex-web-search/);
+    assert.deepEqual(row.message, snapshot);
+    assertFits(api, row);
+    view.showCode = true;
+    assert.deepEqual(plain(chat.render(120)), plain(lines), 'compact-code keeps the same native search rows');
+    view.enabled = false; assert.deepEqual(row.render(120), native);
+    view.enabled = true; chat.render(120); view.dispose(); assert.deepEqual(row.render(120), native);
+  } finally { view.dispose(); }
+});
+
+test('legacy native search summaries, malformed metadata, failed opens and terminal controls render safely', async () => {
+  const api = await ready;
+  const { chat, view } = scene(api);
+  const legacy = message(api, { actions: ['old query', 'Open https://old.example/'], sources: [{url: 'https://not-viewed.example/'}] }, 'Old summary', 'codex-web-search.results.v1');
+  const hostile = '界 👩‍💻 e\u0301\x1b[2J\x1b]52;c;ZXZpbA==\x07\x1b[31mred\x1b[0m\r\nnext';
+  const row = message(api, { operations: [null, {}, {type: 'search', query: false}, {type: 'open_page', url: null},
+    { type: 'search', query: hostile }, { type: 'open_page', url: 'https://failed.example/', status: 'failed' }] }, 'New summary', 'codex-web-search.results.v1');
+  chat.addChild(legacy); chat.addChild(row);
+  try {
+    const raw = chat.render(150).join('\n');
+    assert.match(flattened([raw]), /web search old query/);
+    assert.match(flattened([raw]), /web search Open https:\/\/old.example\//);
+    assert.doesNotMatch(flattened([raw]), /viewed web page https:\/\/old|not-viewed|\[object Object\]|undefined|null/);
+    assert.match(flattened([raw]), /viewed web page https:\/\/failed.example\/ ✗/);
+    assert.ok(!raw.includes('\x1b]') && !raw.includes('\x1b[2J') && !raw.includes('\x1b[31m') && !raw.includes('\x07'));
+    assertFits(api, row); assertFits(api, legacy);
+    const dark = chat.render(100); api.themes.initTheme('light');
+    assert.notDeepEqual(chat.render(100), dark); assert.deepEqual(plain(chat.render(100)), plain(dark));
+    const malformed = message(api, {operations: [null]}, 'Malformed source summary', 'codex-web-search.results.v1');
+    const native = malformed.render(100); chat.addChild(malformed);chat.render(100);
+    assert.deepEqual(malformed.render(100), native, 'unknown shapes keep the normal renderer');
+  } finally { view.dispose(); api.themes.initTheme('dark'); }
+});
+
 test('operational summaries show goal/status/reason, approval, wait sender, scope and session action without stdin', async () => {
   const api = await ready;
   const { tui, chat, view } = scene(api);

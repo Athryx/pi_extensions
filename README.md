@@ -4,6 +4,7 @@ Compatible with Pi 1.1.0 (`@earendil-works/pi-coding-agent`). Develop extensions
 
 - [`context`](pi/extensions/context/README.md): `/context` browses prompts, tool schemas, conversation context and estimated usage.
 - [`server-side-compaction`](pi/extensions/server-side-compaction/README.md): configurable per-thread Pi/OpenAI encrypted compaction, unchanged recent-history retention, portable conversion, and headless worker support.
+- [`codex-web-search`](pi/extensions/codex-web-search/README.md): selectable native OpenAI web search, live/cached configuration, conversation-local `/web-search` commands, and portable source links.
 - [`subagents`](pi/extensions/subagents/README.md): YAML agent templates, persistent workers and same-group messaging. `/groups` selects a human viewer group; `/subagents` inspects its agents read-only. The bottom bar and agent cycling show only the selected group's members.
 - [`workflow`](pi/extensions/workflow/README.md): directed JavaScript-file orchestration using the public codemode sandbox, local agent definitions, scoped sequence/parallel helpers and progress. Every launched agent is a headless root in its own isolated communication group.
 - [`dynamic-workflows` skill](skills/dynamic-workflows/SKILL.md): authoring/running directed workflows, with a self-contained [read-only research example](skills/dynamic-workflows/examples/research.js).
@@ -21,7 +22,7 @@ npm --prefix pi/extensions/workflow ci --ignore-scripts --legacy-peer-deps
 
 For the initial workflow dependency/lockfile setup, use `npm --prefix pi/extensions/workflow install --ignore-scripts --legacy-peer-deps` instead of `ci`. Do not install another physical copy of Pi's host SDK.
 
-The checked-in `pi/settings.json` adds `+codemode` and `+workflow` to default tools. This does not direct invocation: **Do not use workflow unless directed.** Restrictive template loadouts and CLI overrides remain authoritative; leaf roots may select `workflow` independently of ordinary child-template permissions.
+The checked-in `pi/settings.json` adds `+codemode`, `+workflow`, and `+web_search` to default tools. This does not direct workflow invocation: **Do not use workflow unless directed.** Restrictive template loadouts and CLI overrides remain authoritative; leaf roots may select `workflow` independently of ordinary child-template permissions. Native web search is omitted automatically on unsupported providers.
 
 Optional skill installation with the existing skill manager (commands for the user; not automatically run):
 

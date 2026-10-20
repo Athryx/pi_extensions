@@ -113,6 +113,31 @@ test('footer preserves native layout, fits narrow widths and restores instance',
   assert.equal(native.render, original);
 });
 
+test('footer never mutates cached native rows and detached wrappers stay inert', async () => {
+  const { UsageFooter } = await load('footer.ts');
+  const { FooterComponent } = (await packages)['@earendil-works/pi-coding-agent'];
+  const native = Object.create(FooterComponent.prototype);
+  const cached = Object.freeze(['path', 'model/cost', 'other status']);
+  native.render = () => cached;
+  const tui = { children: [native], requestRender() {} };
+  let text = 'Codex left: weekly 73%';
+  const first = new UsageFooter(tui, () => text);
+  for (let i = 0; i < 5; i++) {
+    assert.deepEqual(native.render(100), ['path', 'model/cost', text, 'other status']);
+  }
+  text = 'Codex left: weekly 72%';
+  assert.equal(native.render(100)[2], text);
+  // Simulate another extension wrapping ours before teardown.
+  const retained = native.render;
+  native.render = width => retained(width);
+  first.dispose();
+  assert.deepEqual(native.render(100), cached);
+  const second = new UsageFooter(tui, () => text);
+  assert.equal(native.render(100).filter(line => line.includes('Codex left:')).length, 1);
+  second.dispose();
+  assert.deepEqual(native.render(100), cached);
+});
+
 test('extension loads, /usage forces a poll and rejects arguments without polling', async () => {
   const { loadExtensions } = await host('dist/core/extensions/loader.js');
   const { extensions, errors } = await loadExtensions([join(__dirname, 'index.ts')], resolve(__dirname, '../../..'));

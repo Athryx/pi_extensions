@@ -171,6 +171,39 @@ test('received messages cache full bodies and invalidate mutable metadata and le
   } finally { view.dispose(); }
 });
 
+test('native web search rows reuse cached styling and detect in-place action, status, width, theme and view changes', async () => {
+  const api = await ready;
+  const counter = countedTheme(api.themes.theme);
+  const { chat, view } = scene(api, () => counter.theme);
+  const message = { role: 'custom', customType: 'codex-web-search.results.v1', display: true, timestamp: 1,
+    content: 'Native search summary', details: { outcome: 'completed', operations: [
+      {type: 'search', query: 'before'}, {type: 'open_page', url: 'https://before.example/'},
+      {type: 'find_in_page', url: 'https://before.example/', pattern: 'old'},
+    ] } };
+  message.details.toJSON = () => { throw new Error('never serialize web search metadata on spinner frames'); };
+  const row = new api.CustomMessageComponent(message, () => new api.Text('native search renderer', 0, 0), api.themes.getMarkdownTheme()); chat.addChild(row);
+  try {
+    chat.render(120); const first = row.render(120), count = counter.calls();
+    for (let frame = 0; frame < 30; frame++) { chat.render(120); assert.equal(row.render(120), first); }
+    assert.equal(counter.calls(), count, 'no repeated color, truncation or wrapping work');
+    message.details.operations[0].query = 'after'; assert.match(plain(chat.render(120)), /searched after/);
+    message.details.operations[1].url = 'https://after.example/';message.details.operations[1].status = 'failed';
+    assert.match(plain(chat.render(120)), /viewed web page https:\/\/after.example\/ ✗/);
+    message.details.operations[2].pattern = 'new'; assert.match(plain(chat.render(120)), /searched web page.* · new/);
+    message.details.operations[2].type = 'open_page'; assert.doesNotMatch(plain(chat.render(120)), /searched web page/);
+    message.details.operations.pop(); assert.equal((plain(chat.render(120)).match(/viewed web page/g)??[]).length, 1);
+    message.details.operations.push({type: 'search', query: 'new query'});assert.match(plain(chat.render(120)), /searched new query/);
+    const cached = row.render(120);assert.notStrictEqual(row.render(30),cached);
+    row.outputPad = 0; assert.match(plain(chat.render(120)), /\nsearched after/);
+    const dark = chat.render(120);api.themes.initTheme('light');assert.notDeepEqual(chat.render(120), dark);
+    view.enabled = false;assert.match(plain(row.render(120)), /native search renderer/);
+    view.enabled = true;assert.match(plain(chat.render(120)), /searched after/);
+    row.invalidate();assert.notStrictEqual(row.render(120),cached);
+    delete message.details.operations;message.details.actions = ['legacy before'];assert.match(plain(chat.render(120)), /web search legacy before/);
+    message.details.actions[0] = 'legacy after';assert.match(plain(chat.render(120)), /web search legacy after/);
+  } finally { view.dispose();api.themes.initTheme('dark'); }
+});
+
 test('restoring a previous child array restores its cached group positions', async () => {
   const api = await ready;
   const { tui, chat, view } = scene(api);

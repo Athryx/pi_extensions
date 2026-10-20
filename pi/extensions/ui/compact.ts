@@ -3,7 +3,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
 import { highlightCompactCode } from "./syntax-highlight.js";
 import { emphasize } from "./emphasis.js";
-import { customToolSummary, isQuestionTool, renderCustomTool, renderAgentMessage } from "./custom-tools";
+import { customToolSummary, isQuestionTool, renderCustomTool, renderCustomMessage, isCompactMessageType } from "./custom-tools";
 import type { AgentMessageInput } from "./custom-tools";
 import { messageKey, sameKey, themeKey, toolKey, type RenderCache } from "./render-cache.js";
 
@@ -48,7 +48,7 @@ function isToolRow(component: Component): component is ToolRow {
     && typeof row.executionStarted === "boolean" && typeof row.isPartial === "boolean";
 }
 function isAgentMessage(component: Component): component is AgentMessageRow {
-  return (component as Partial<AgentMessageRow>).message?.customType === "subagents.message.v1";
+  return isCompactMessageType((component as Partial<AgentMessageRow>).message?.customType);
 }
 function isBranch(component: Component): component is Branch {
   return Array.isArray((component as Partial<Branch>).children);
@@ -203,7 +203,7 @@ export class CompactView {
         const key = [width, ...themeKey(theme), component.outputPad, ...messageKey(component.message)];
         const cached = this.messageCache.get(component);
         if (sameKey(cached?.key, key)) return cached!.lines;
-        const body = renderAgentMessage(component.message, theme, width, component.outputPad);
+        const body = renderCustomMessage(component.message, theme, width, component.outputPad);
         const lines = body ? ["", ...body] : original.render.call(component, width);
         this.messageCache.set(component, { key, lines });
         return lines;

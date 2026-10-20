@@ -14,12 +14,13 @@ export class UsageFooter {
         const render = component.render;
         const own = Object.hasOwn(component, "render");
         const wrapper = (width: number): string[] => {
-          const text = this.getText();
           const lines = render.call(component, width);
+          // Another extension may retain this wrapper after we detach it.
+          if (this.disposed) return lines;
+          const text = this.getText();
           if (!text || lines.length < 2) return lines;
-          // Keep the native cost/model row untouched; usage gets its own row below.
-          lines.splice(2, 0, truncateToWidth(text, width, "…"));
-          return lines;
+          // Never mutate another renderer's potentially cached output.
+          return [...lines.slice(0, 2), truncateToWidth(text, width, "…"), ...lines.slice(2)];
         };
         this.originals.set(component, { render, own, wrapper });
         component.render = wrapper;

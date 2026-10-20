@@ -56,6 +56,20 @@ export function toolKey(row: CustomToolRow, showCode: boolean): unknown[] {
 export function messageKey(message: AgentMessageInput): unknown[] {
   const details = object(message.details);
   const key: unknown[] = [message, message.customType, message.display, message.details, details.from, details.message];
+  if (message.customType === "codex-web-search.results.v1") {
+    const operations = details.operations;
+    key.push(Array.isArray(operations));
+    if (Array.isArray(operations)) {
+      key.push(Math.min(operations.length, 50));
+      for (let index = 0; index < Math.min(operations.length, 50); index++) {
+        const operation = object(operations[index]);
+        key.push(operation.type, operation.query, operation.url, operation.pattern, operation.status);
+      }
+    } else if (Array.isArray(details.actions)) {
+      key.push(Math.min(details.actions.length, 20));
+      for (let index = 0; index < Math.min(details.actions.length, 20); index++) key.push(details.actions[index]);
+    }
+  }
   if (Array.isArray(message.content)) {
     key.push(message.content.length);
     for (const block of message.content) key.push(object(block).type, object(block).text);

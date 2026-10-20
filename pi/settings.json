@@ -13,9 +13,14 @@
     "openrouter/z-ai/glm-5.3-flash",
     "openai-codex/gpt-6-luna",
     "openai-codex/gpt-6-sol",
-    "openai-codex/gpt-6.1-sol"
+    "openai-codex/gpt-6.1-sol",
+    "openrouter/deepseek/deepseek-v4-flash-0731"
   ],
   "steeringMode": "all",
   "editorPaddingX": 1,
-  "defaultTools": ["+codemode", "+workflow"]
+  "defaultTools": [
+    "+codemode",
+    "+workflow",
+    "+web_search"
+  ]
 }

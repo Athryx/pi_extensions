@@ -7,6 +7,9 @@ export interface CustomToolRow {
   isPartial?: boolean; executionStarted?: boolean; outputPad?: number;
 }
 export interface AgentMessageInput { customType: string; content?: unknown; details?: unknown; display?: boolean }
+export function isCompactMessageType(customType: string | undefined): boolean {
+  return customType === "subagents.message.v1" || customType === "codex-web-search.results.v1";
+}
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const label = (name: string) => name.split(/[.:/]/).pop() || name;
 
@@ -129,10 +132,38 @@ export function renderCustomTool(row: CustomToolRow, theme: Theme, width: number
   ];
 }
 
-/** Workspace receives are custom messages, not wait_message tool output. */
-export function renderAgentMessage(message: AgentMessageInput, theme: Theme, width: number, padding = 1): string[] | undefined {
-  if (message.customType !== "subagents.message.v1" || message.display === false) return;
+/** Native hosted search operations use the same labels and spacing as compact tools. */
+function renderWebSearch(message: AgentMessageInput, theme: Theme, width: number, padding: number): string[] | undefined {
+  const details = object(message.details);
+  const rows: string[] = [];
+  const add = (title: string, value: string, status?: unknown) => {
+    if (rows.length) rows.push("");
+    rows.push(header(title, inline(value), {name: "web_search", args: {}, outputPad: padding,
+      result: status === "failed" ? {isError: true} : undefined}, theme, width));
+  };
+  if (Array.isArray(details.operations)) {
+    for (const value of details.operations.slice(0, 50)) {
+      const operation = object(value);
+      if (operation.type === "search" && typeof operation.query === "string") add("searched", operation.query, operation.status);
+      else if (operation.type === "open_page" && typeof operation.url === "string") add("viewed web page", operation.url, operation.status);
+      else if (operation.type === "find_in_page" && typeof operation.url === "string" && typeof operation.pattern === "string") {
+        add("searched web page", `${operation.url} · ${operation.pattern}`, operation.status);
+      }
+    }
+  } else if (Array.isArray(details.actions)) {
+    // Older sessions only stored mixed query/action strings. Preserve those
+    // without guessing which strings were actual page opens or search queries.
+    for (const action of details.actions.slice(0, 20)) if (typeof action === "string") add("web search", action);
+  }
+  return rows.length ? rows : undefined;
+}
+
+/** Workspace receives and hosted searches arrive as custom messages. */
+export function renderCustomMessage(message: AgentMessageInput, theme: Theme, width: number, padding = 1): string[] | undefined {
+  if (message.display === false) return;
   if (width <= 0) return [];
+  if (message.customType === "codex-web-search.results.v1") return renderWebSearch(message, theme, width, padding);
+  if (message.customType !== "subagents.message.v1") return;
   const details = object(message.details);
   let from = typeof details.from === "string" ? details.from : undefined;
   let content = typeof details.message === "string" ? details.message : undefined;

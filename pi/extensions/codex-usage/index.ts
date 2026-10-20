@@ -65,12 +65,23 @@ export default function codexUsage(pi: ExtensionAPI): void {
     lastPoll = 0;
     if (ctx.mode !== "tui") return;
     // Obtain the live TUI without taking over other extensions' footer/widgets.
-    ctx.ui.setWidget(WIDGET, tui => {
-      footer = new UsageFooter(tui, () => {
+    ctx.ui.setWidget(WIDGET, (tui, theme) => {
+      // Pi may rebuild widgets without first disposing the previous instance.
+      footer?.dispose();
+      const adapter = new UsageFooter(tui, () => {
         const text = footerText(usage, !!error);
-        return text ? ctx.ui.theme.fg("dim", text) : "";
+        // Rendering can outlive the session ctx during fork/resume/reload.
+        return text ? theme.fg("dim", text) : "";
       });
-      return { render: () => { footer?.attach(); return []; }, invalidate() {}, dispose: cleanup };
+      footer = adapter;
+      return {
+        render: () => { adapter.attach(); return []; },
+        invalidate() {},
+        dispose() {
+          adapter.dispose();
+          if (footer === adapter) footer = undefined;
+        },
+      };
     }, { placement: "belowEditor" });
     void poll(ctx);
     timer = setInterval(() => { void poll(ctx); }, POLL_MS);
@@ -88,7 +99,10 @@ export default function codexUsage(pi: ExtensionAPI): void {
     description: "Poll Codex subscription limits, reset times, plan, and credits",
     handler: async (args, ctx) => {
       if (args.trim()) { ctx.ui.notify("Usage: /usage", "warning"); return; }
+      const current = generation;
       await poll(ctx);
+      // A session replacement may have invalidated the command ctx while polling.
+      if (current !== generation) return;
       if (error || !usage) {
         ctx.ui.notify(error ?? "Codex usage unavailable.", "error");
         return;
