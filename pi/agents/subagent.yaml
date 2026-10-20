@@ -6,6 +6,7 @@ model:
   thinking: global
 tools:
   include_defaults: true
+  extra: [web_search]
 skills:
   include_defaults: true
 subagents:

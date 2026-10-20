@@ -6,7 +6,7 @@ model:
   thinking: global
 tools:
   include_defaults: true
-  extra: [workflow]
+  extra: [workflow, web_search]
 skills:
   include_defaults: true
   extra_paths: [./dynamic-workflows]
