@@ -1,3 +1,4 @@
+import type { ProviderToolUpdate } from "../shared/provider-tools";
 export const SEARCH_MESSAGE = "codex-web-search.results.v1";
 export interface Source { title: string; url: string }
 export type SearchOperation = ({ type: "search"; query: string } | { type: "open_page"; url: string } | { type: "find_in_page"; url: string; pattern: string }) & { status?: string };
@@ -101,14 +102,33 @@ export class SearchCapture {
       this.messages.set(item.id, parts);
     }
   }
-  ingest(value: unknown): void {
+  ingest(value: unknown): boolean {
     const event = object(value);
-    if (event.type === "response.output_item.done") this.item(event.item);
-    else if (event.type === "response.output_item.added" && object(event.item).type === "web_search_call") this.item(event.item);
+    if (event.type === "response.output_item.done" || event.type === "response.output_item.added" && object(event.item).type === "web_search_call") {
+      this.item(event.item);
+      return object(event.item).type === "web_search_call";
+    }
     else if (["response.completed", "response.incomplete", "response.failed"].includes(String(event.type))) {
       const response = object(event.response);
       if (Array.isArray(response.output)) for (const value of response.output.slice(0, 100)) this.item(value);
+      return this.sawSearch;
     }
+    return false;
+  }
+  /** Provider adapter: the shared UI bridge needs no knowledge of OpenAI events. */
+  providerUpdates(): ProviderToolUpdate[] {
+    const updates: ProviderToolUpdate[] = [];
+    for (const [id, rawStatus] of this.calls) {
+      const status = rawStatus === "completed" ? "completed" : rawStatus === "failed" ? "error" : "running";
+      const operations = this.operations.get(id) ?? [];
+      if (!operations.length) updates.push({id: `${id}:0`, label: "web search", summary: "", status});
+      operations.forEach((operation, index) => {
+        updates.push({id: `${id}:${index}`, status,
+          label: operation.type === "search" ? "searched" : operation.type === "open_page" ? "viewed web page" : "searched web page",
+          summary: operation.type === "search" ? operation.query : operation.type === "open_page" ? operation.url : `${operation.url} · ${operation.pattern}`});
+      });
+    }
+    return updates.slice(0, 50);
   }
   linkText(text: string, signature?: string): string {
     let id = signature;

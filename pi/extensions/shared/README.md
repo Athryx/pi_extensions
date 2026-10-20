@@ -1,5 +1,37 @@
 # Shared extension policies and capabilities
 
+## Streamed provider tools
+
+[`provider-tools.ts`](provider-tools.ts) connects provider-side tool activity to the custom UI without inventing local tool calls. Create a reporter once in a provider adapter's factory, before registering its request handlers:
+
+```ts
+import { createProviderToolReporter, type ProviderToolStream } from "../shared/provider-tools";
+
+export default function (pi: ExtensionAPI) {
+  const reporter = createProviderToolReporter(pi, "my-provider");
+  let tools: ProviderToolStream | undefined;
+  pi.on("before_provider_request", () => { tools = reporter.begin(); });
+  pi.on("provider_stream_event", event => {
+    // Parse your provider's event here, without modifying event.data.
+    // Use the same id for subsequent argument/status updates to this call.
+    tools?.update({
+      id: "provider-call-id",
+      label: "rendered diagram",
+      summary: "system overview",
+      status: "running", // running | completed | error | cancelled
+    });
+  });
+}
+```
+
+The sample update belongs inside the adapter's matching-tool-event branch, not every stream event. The UI is provider-independent: adapters supply their display labels and concise arguments. `codex-web-search` uses this API for native search, page-open and find-in-page events.
+
+One coordinator is discovered through the session's own `pi.events`; multiple adapters share it and their call IDs are namespaced. `begin()` returns a request-scoped stream. `update()` upserts a row in discovery order; identical snapshots do not request a redraw. It returns `false` for stale/closed streams, malformed updates, or more than 256 rows per response. Labels are capped at 120 characters and argument summaries at 8,192. No raw provider envelopes, credentials, callbacks, or execution capabilities are retained.
+
+Version-1 `providerToolCalls` metadata is attached to live assistant-message clones and persisted on the finalized assistant message. Pi's normal serializers ignore this display-only field; it is not a function declaration or a model-facing tool result. The compact UI renders the rows above their associated assistant response, even before any text delta, and restores the same placement after resume. Existing source summaries may remain as model context or native-mode UI, with `inlineProviderTools: true` marking web-search summaries that compact mode must not render a second time.
+
+Running rows become completed, error, or cancelled when the message finishes. Session/model/tree changes invalidate request handles, and shutdown withdraws the service. New requests get fresh metadata; prior messages keep their completed snapshots. `PROVIDER_TOOLS_CHANGED` is a session-local display notification used to redraw main and viewed-worker transcripts. It exposes no model-facing cross-agent discovery or messaging.
+
 ## Interactive-only policy
 
 Pi 1.1.0 has no native `interactiveOnly` tool/prompt field. These helpers implement an extension-owned policy without modifying Pi.

@@ -4,6 +4,7 @@ import { CompactView } from "./compact.js";
 import { ViewedSessionController } from "./viewed-session";
 import { VIEWED_SESSION_REQUEST, VIEWED_SESSION_CHANGED } from "../shared/viewed-session";
 import type { ViewedSessionAPI, ViewedSessionInfo, ViewedSessionRequest } from "../shared/viewed-session";
+import { PROVIDER_TOOLS_CHANGED } from "../shared/provider-tools";
 
 const VIEW_ENTRY = "ui-view";
 const WIDGET = "ui-adapter";
@@ -41,6 +42,8 @@ export default function ui(pi: ExtensionAPI) {
   let transcript: ViewedSessionController | undefined;
   let cleaning = false;
   let unsubscribe: (() => void) | undefined;
+  let redrawProviderTools: (() => void) | undefined;
+  pi.events.on(PROVIDER_TOOLS_CHANGED, () => redrawProviderTools?.());
   const viewListeners = new Set<(view: ViewedSessionInfo | undefined) => void>();
   const api: ViewedSessionAPI = {
     version: 1,
@@ -66,6 +69,7 @@ export default function ui(pi: ExtensionAPI) {
 
   const cleanup = () => {
     cleaning = true;
+    redrawProviderTools = undefined;
     unsubscribe?.(); unsubscribe = undefined;
     transcript?.dispose(); transcript = undefined;
     view?.dispose(); view = undefined;
@@ -124,6 +128,7 @@ export default function ui(pi: ExtensionAPI) {
     // A zero-height widget supplies the live TUI without replacing the user's
     // editor, header, footer, or other extensions' widgets.
     ctx.ui.setWidget(WIDGET, tui => {
+      redrawProviderTools = () => tui.requestRender();
       const attachCompact = () => {
         // Release wrappers on the retired transcript, including hidden main
         // rows. Reattach only the visible tree, so switching cannot leak rows.

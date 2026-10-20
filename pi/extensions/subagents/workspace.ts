@@ -602,7 +602,7 @@ export class Workspace {
       // newly opened transcript can hydrate nested calls without preview loss.
       record.toolUpdates.set(event.toolCallId, {...record.toolUpdates.get(event.toolCallId), ...event});
     }
-    if (event.type === "message_update") {
+    if (event.type === "message_update" || event.type === "message_start" && event.message.role === "assistant") {
       record.messages = [...record.session!.messages.filter(m => m !== event.message), event.message];
     } else if (event.type === "message_end") {
       record.messages = [...record.session!.messages];

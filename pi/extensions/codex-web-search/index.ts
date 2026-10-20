@@ -4,16 +4,18 @@ import { conversationMode, isMode, loadConfig, MODE_ENTRY, type Configuration, t
 import { searchRequest, supportsSearch } from "./request.ts";
 import { SEARCH_MESSAGE, SearchCapture, summary } from "./output.ts";
 import { SearchSummary } from "./render.ts";
+import { createProviderToolReporter, providerToolCalls, type ProviderToolStream } from "../shared/provider-tools";
 
 export default function (pi: ExtensionAPI) {
+  const reporter = createProviderToolReporter(pi, "codex-web-search");
+  let providerStream: ProviderToolStream | undefined;
   let config: Configuration = { mode: "live", source: "default", warnings: [] };
   let capture: SearchCapture | undefined;
   let requestMode: Mode = "live";
-  let progress: string | undefined;
   let generation = 0;
   const selected = () => pi.getActiveTools().includes("web_search");
   const mode = (ctx: ExtensionContext) => conversationMode(ctx.sessionManager.getBranch()) ?? config.mode;
-  const clear = (ctx: ExtensionContext) => { capture = undefined; progress = undefined; if (ctx.hasUI) ctx.ui.setStatus("codex-web-search", undefined); };
+  const clear = (ctx: ExtensionContext) => { capture = undefined; providerStream = undefined; if (ctx.hasUI) ctx.ui.setStatus("codex-web-search", undefined); };
 
   pi.registerTool({
     name: "web_search", label: "Web Search", defaultActive: false, exposure: "model-only",
@@ -70,17 +72,13 @@ export default function (pi: ExtensionAPI) {
     if (!next) return;
     clear(ctx);
     capture = new SearchCapture();
+    providerStream = reporter.begin();
     requestMode = mode(ctx);
     return next;
   });
   pi.on("provider_stream_event", (event, ctx) => {
     if (!capture || event.provider !== ctx.model?.provider || event.api !== ctx.model.api || event.model !== ctx.model.id) return;
-    capture.ingest(event.data);
-    if (ctx.hasUI && capture.sawSearch) {
-      const active = [...capture.calls.values()].some(status => status !== "completed" && status !== "failed");
-      const next = active ? `Web search (${requestMode})…` : `Web search (${requestMode}) complete`;
-      if (next !== progress) { progress = next; ctx.ui.setStatus("codex-web-search", next); }
-    }
+    if (capture.ingest(event.data)) for (const update of capture.providerUpdates()) providerStream?.update(update);
   });
   pi.on("message_end", event => {
     if (!capture?.sawSearch || event.message.role !== "assistant") return;
@@ -91,7 +89,7 @@ export default function (pi: ExtensionAPI) {
     const completed = capture;
     clear(ctx);
     if (!completed?.sawSearch) return;
-    const details = completed.details(requestMode, event.outcome);
+    const details = { ...completed.details(requestMode, event.outcome), inlineProviderTools: providerToolCalls(event.message).length > 0 };
     return { entries: [{ type: "custom_message" as const, customType: SEARCH_MESSAGE, content: summary(details), details, display: true }] };
   });
 }

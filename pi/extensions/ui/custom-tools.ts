@@ -135,6 +135,7 @@ export function renderCustomTool(row: CustomToolRow, theme: Theme, width: number
 /** Native hosted search operations use the same labels and spacing as compact tools. */
 function renderWebSearch(message: AgentMessageInput, theme: Theme, width: number, padding: number): string[] | undefined {
   const details = object(message.details);
+  if (details.inlineProviderTools === true) return [];
   const rows: string[] = [];
   const add = (title: string, value: string, status?: unknown) => {
     if (rows.length) rows.push("");

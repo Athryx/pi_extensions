@@ -1,15 +1,16 @@
 import { homedir } from "node:os";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, type Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
 import { highlightCompactCode } from "./syntax-highlight.js";
 import { emphasize } from "./emphasis.js";
 import { customToolSummary, isQuestionTool, renderCustomTool, renderCustomMessage, isCompactMessageType } from "./custom-tools";
 import type { AgentMessageInput } from "./custom-tools";
 import { messageKey, sameKey, themeKey, toolKey, type RenderCache } from "./render-cache.js";
+import { providerToolKey, renderProviderTools } from "./provider-tools";
 
 // Pi exposes renderers, but no transcript-layout hook. Keep the only internal
-// dependency here: runtime fields on ToolExecutionComponent and known workspace
-// CustomMessageComponent instances. Never replace tool definitions, prototypes,
+// dependency here: runtime fields on tool, assistant, and known custom-message
+// components. Never replace tool definitions, prototypes,
 // transcript entries, or another tool's renderer.
 interface ToolRow extends Component {
   toolName: string;
@@ -29,6 +30,8 @@ interface AgentMessageRow extends Component {
   message: AgentMessageInput;
   outputPad?: number;
 }
+interface AssistantRow extends Component { lastMessage: unknown; outputPad?: number }
+function isAssistantRow(component: Component): component is AssistantRow { return component instanceof AssistantMessageComponent; }
 interface GroupPosition {
   grouped: boolean;
   first: boolean;
@@ -165,6 +168,7 @@ export class CompactView {
   private groupCache = new WeakMap<Component[], GroupCache>();
   private rowCache = new WeakMap<ToolRow, RenderCache>();
   private messageCache = new WeakMap<AgentMessageRow, RenderCache>();
+  private providerCache = new WeakMap<AssistantRow, RenderCache>();
   private nestedRows = new WeakMap<ToolRow, NestedRows>();
   private syntaxCache = new WeakMap<ToolRow, { language: "bash" | "javascript"; command: string; theme: unknown[]; text: string }>();
   private disposed = false;
@@ -183,9 +187,22 @@ export class CompactView {
       render: component.render, mouse: component.handleMouse, invalidate: component.invalidate,
       ownRender: Object.hasOwn(component, "render"), ownMouse: Object.hasOwn(component, "handleMouse"),
       ownInvalidate: Object.hasOwn(component, "invalidate"),
-      wrappedInvalidate: isToolRow(component) || isAgentMessage(component),
+      wrappedInvalidate: isToolRow(component) || isAgentMessage(component) || isAssistantRow(component),
     };
     this.originals.set(component, original);
+    if (isAssistantRow(component)) {
+      component.invalidate = () => { this.providerCache.delete(component); original.invalidate.call(component); };
+      component.render = width => {
+        const body = original.render.call(component, width);
+        const tools = this.enabled ? this.providerRows(component, width) : [];
+        return tools.length ? [...tools, ...body] : body;
+      };
+      component.handleMouse = event => {
+        const offset = this.enabled ? this.providerRows(component, event.width).length : 0;
+        return event.y < offset ? undefined : original.mouse?.call(component, { ...event, y: event.y - offset, height: Math.max(0, event.height - offset) });
+      };
+      return;
+    }
     if (isToolRow(component)) {
       component.invalidate = () => { this.rowCache.delete(component); original.invalidate.call(component); };
       component.render = width => this.enabled ? this.renderRow(component, width) : original.render.call(component, width);
@@ -204,7 +221,7 @@ export class CompactView {
         const cached = this.messageCache.get(component);
         if (sameKey(cached?.key, key)) return cached!.lines;
         const body = renderCustomMessage(component.message, theme, width, component.outputPad);
-        const lines = body ? ["", ...body] : original.render.call(component, width);
+        const lines = body ? body.length ? ["", ...body] : [] : original.render.call(component, width);
         this.messageCache.set(component, { key, lines });
         return lines;
       };
@@ -219,6 +236,16 @@ export class CompactView {
         return original.render.call(component, width);
       };
     }
+  }
+
+  private providerRows(row: AssistantRow, width: number): string[] {
+    const theme = this.getTheme();
+    const key = [width, ...themeKey(theme), row.outputPad, ...providerToolKey(row.lastMessage)];
+    const cached = this.providerCache.get(row);
+    if (sameKey(cached?.key, key)) return cached!.lines;
+    const lines = renderProviderTools(row.lastMessage, theme, width, row.outputPad);
+    this.providerCache.set(row, {key, lines});
+    return lines;
   }
 
   private groupRows(children: Component[], width: number): void {
@@ -413,7 +440,7 @@ export class CompactView {
       }
     }
     this.originals.clear();
-    this.rowCache = new WeakMap(); this.messageCache = new WeakMap();
+    this.rowCache = new WeakMap(); this.messageCache = new WeakMap(); this.providerCache = new WeakMap();
     this.groupCache = new WeakMap(); this.nestedRows = new WeakMap(); this.syntaxCache = new WeakMap();
   }
 }

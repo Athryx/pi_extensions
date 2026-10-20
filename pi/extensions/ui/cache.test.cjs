@@ -20,8 +20,9 @@ const ready = (async () => {
   const themes = await host('dist/modes/interactive/theme/theme.js');
   const { ToolExecutionComponent } = await host('dist/modes/interactive/components/tool-execution.js');
   const { CustomMessageComponent } = await host('dist/modes/interactive/components/custom-message.js');
+  const { AssistantMessageComponent } = await host('dist/modes/interactive/components/assistant-message.js');
   themes.initTheme('dark');
-  return { ...compact, ...emphasis, ...syntax, ...tui, themes, ToolExecutionComponent, CustomMessageComponent };
+  return { ...compact, ...emphasis, ...syntax, ...tui, themes, ToolExecutionComponent, CustomMessageComponent, AssistantMessageComponent };
 })();
 const plain = lines => lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '');
 function scene(api, theme = () => api.themes.theme) {
@@ -202,6 +203,53 @@ test('native web search rows reuse cached styling and detect in-place action, st
     delete message.details.operations;message.details.actions = ['legacy before'];assert.match(plain(chat.render(120)), /web search legacy before/);
     message.details.actions[0] = 'legacy after';assert.match(plain(chat.render(120)), /web search legacy after/);
   } finally { view.dispose();api.themes.initTheme('dark'); }
+});
+
+test('generic streamed provider rows precede their assistant response and cache styling across spinner frames', async () => {
+  const api = await ready;const counter = countedTheme(api.themes.theme);
+  const { chat, view } = scene(api, () => counter.theme);
+  const message = {role:'assistant',content:[],stopReason:'pending',timestamp:1,providerToolCalls:{version:1,calls:[]}};
+  const row = new api.AssistantMessageComponent(message, false, api.themes.getMarkdownTheme(), undefined, 1);chat.addChild(row);
+  const native = row.render(120);
+  try {
+    chat.render(120);
+    message.providerToolCalls.calls.push({id:'other:1',label:'generated image',summary:'a fox',status:'running'});
+    assert.match(plain(chat.render(120)),/generated image a fox ⋯/,'a provider update needs no assistant text delta');
+    const count = counter.calls();for(let frame=0;frame<30;frame++)chat.render(120);assert.equal(counter.calls(),count);
+    message.providerToolCalls.calls[0].summary = 'a blue fox';assert.match(plain(chat.render(120)),/a blue fox/);
+    message.providerToolCalls.calls[0].status = 'completed';
+    message.content = [{type:'text',text:'FINAL RESPONSE'}];message.stopReason='stop';row.updateContent(message,false);
+    const completed = plain(chat.render(120));assert.ok(completed.indexOf('generated image')<completed.indexOf('FINAL RESPONSE'));assert.doesNotMatch(completed,/ ⋯/);
+    const styles = counter.calls();for(let frame=0;frame<20;frame++)chat.render(120);assert.equal(counter.calls(),styles);
+    message.providerToolCalls.calls[0].label='processed image';assert.match(plain(chat.render(120)),/processed image/);
+    message.providerToolCalls.calls[0].status='error';assert.match(plain(chat.render(120)),/ ✗/);
+    message.providerToolCalls.calls[0].status='cancelled';assert.match(plain(chat.render(120)),/cancelled/);
+    // The prefix owns its width; native assistant Markdown owns the body layout.
+    for(const width of [1,2,5,20,60]) for(const line of row.render(width).slice(0,2))assert.ok(api.visibleWidth(line)<=width);
+    const dark=chat.render(120);api.themes.initTheme('light');assert.notDeepEqual(chat.render(120),dark);
+    row.outputPad=0;assert.match(plain(chat.render(120)),/\nprocessed image/);
+    message.providerToolCalls.calls.push({id:'other:2',label:'read document',summary:'second',status:'completed'});assert.match(plain(chat.render(120)),/read document second/);
+    message.providerToolCalls.calls.pop();assert.doesNotMatch(plain(chat.render(120)),/read document/);
+    view.enabled=false;assert.doesNotMatch(plain(row.render(120)),/processed image/);
+    view.enabled=true;assert.match(plain(chat.render(120)),/processed image/);
+    view.dispose();assert.equal(Object.hasOwn(row,'render'),false);assert.equal(Object.hasOwn(row,'handleMouse'),false);assert.equal(Object.hasOwn(row,'invalidate'),false);
+    assert.doesNotMatch(plain(row.render(120)),/processed image/);assert.notDeepEqual(row.render(120),native);
+  } finally {view.dispose();api.themes.initTheme('dark');}
+});
+
+test('provider rows sanitize terminal input and preserve thinking mouse coordinates below the rows', async () => {
+  const api = await ready;const {chat,view}=scene(api);
+  const message={role:'assistant',content:[{type:'thinking',thinking:'REVEALED THOUGHT'},{type:'text',text:'Answer'}],stopReason:'stop',timestamp:1,
+    providerToolCalls:{version:1,calls:[{id:'demo',label:'searched\x1b[2J',summary:'text\x1b]52;c;ZXZpbA==\x07\nnext',status:'completed'}]}};
+  const row=new api.AssistantMessageComponent(message,true,api.themes.getMarkdownTheme(),undefined,1);chat.addChild(row);
+  try {
+    const lines=chat.render(120);assert.ok(!lines.join('').includes('\x1b]52')&&!lines.join('').includes('\x1b[2J'));
+    const y=lines.findIndex(line=>line.includes('Thinking...'));assert.ok(y>1);
+    const event={type:'click',button:'left',x:2,y,width:120,height:lines.length,screenX:2,screenY:y,shift:false,alt:false,ctrl:false};
+    assert.equal(row.handleMouse({...event,y:1}),undefined,'provider rows keep terminal selection behavior');
+    row.handleMouse(event);assert.match(plain(chat.render(120)),/REVEALED THOUGHT/);
+    assert.equal(message.content[0].thinking,'REVEALED THOUGHT');
+  } finally {view.dispose();}
 });
 
 test('restoring a previous child array restores its cached group positions', async () => {

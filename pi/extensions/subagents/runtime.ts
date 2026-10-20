@@ -6,6 +6,7 @@ import {
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { loadout, checkTools, promptIdentity, toolEnabled, PI_DEFAULT_TOOLS } from "./loadout";
 import { isInteractiveTool } from "../shared/interactive";
+import { PROVIDER_TOOLS_CHANGED } from "../shared/provider-tools";
 import { registerTools } from "./tools";
 import { registerWorkflowAgents } from "./workflow-agents";
 import type { AgentRecord } from "./types";
@@ -35,6 +36,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
   const extensions = paths.extensions.filter(p => p.enabled && !excluded(p.path, workspace.config.worker_exclude_extensions)).map(p => p.path);
   const allowed = new Set(loadout(record.template, settings.getDefaultTools() ?? PI_DEFAULT_TOOLS, record.identity));
   const factory: ExtensionFactory = pi => {
+    pi.events.on(PROVIDER_TOOLS_CHANGED, () => workspace.changed());
     registerTools(pi, () => workspace, record.identity.name, !!record.template.subagents.allowed.length, record.identity);
     registerWorkflowAgents(pi, () => workspace, record.identity.name);
     pi.on("before_agent_start", event => {

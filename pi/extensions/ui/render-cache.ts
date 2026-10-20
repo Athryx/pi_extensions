@@ -57,6 +57,7 @@ export function messageKey(message: AgentMessageInput): unknown[] {
   const details = object(message.details);
   const key: unknown[] = [message, message.customType, message.display, message.details, details.from, details.message];
   if (message.customType === "codex-web-search.results.v1") {
+    key.push(details.inlineProviderTools);
     const operations = details.operations;
     key.push(Array.isArray(operations));
     if (Array.isArray(operations)) {

@@ -76,6 +76,7 @@ test('installed Pi runs native search, saves links and summaries, then switches 
     assert.equal(results(f).length,1);assert.equal(results(f)[0].details.mode,'live');
     await f.session.setModel(f.other);await f.session.prompt('Continue on another provider.');
     const foreign=f.requests.at(-1).payload;assert.equal(native(foreign).length,0);assert.doesNotMatch(JSON.stringify(foreign.tools),/web_search/);
+    assert.doesNotMatch(JSON.stringify(foreign),/providerToolCalls/,'display metadata is not a provider request field');
     assert.match(JSON.stringify(foreign.input),/https:\/\/example.com\/fact/);assert.ok(f.session.getActiveToolNames().includes('web_search'));
     await f.session.setModel(f.codex);await f.session.prompt('Search with Codex.');
     const codexAnswer=f.session.messages.filter(m=>m.role==='assistant').at(-1);assert.notEqual(codexAnswer.stopReason,'error',codexAnswer.errorMessage);
@@ -101,6 +102,7 @@ test('native SSE actions survive resume and render through the custom UI as sear
   const {CompactView}=await load('../ui/compact.ts');
   const {Container}=await host('node_modules/@earendil-works/pi-tui/dist/index.js');
   const {CustomMessageComponent}=await host('dist/modes/interactive/components/custom-message.js');
+  const {AssistantMessageComponent}=await host('dist/modes/interactive/components/assistant-message.js');
   const themes=await host('dist/modes/interactive/theme/theme.js');themes.initTheme('dark');
   let view;
   try{
@@ -111,9 +113,14 @@ test('native SSE actions survive resume and render through the custom UI as sear
     const tui=new Container(),chat=new Container();tui.requestRender=()=>{};tui.addChild(chat);
     const row=new CustomMessageComponent({role:'custom',customType:saved.customType,content:saved.content,details:saved.details,display:true,timestamp:1},
       f.session.extensionRunner.getMessageRenderer(saved.customType),themes.getMarkdownTheme(),1);
-    const normal=row.render(120);chat.addChild(row);view=new CompactView(tui,()=>themes.theme);
+    const answer=f.session.messages.filter(message=>message.role==='assistant').at(-1);
+    assert.equal(answer.providerToolCalls.calls.length,2);assert.equal(saved.details.inlineProviderTools,true);
+    const assistant=new AssistantMessageComponent(answer,false,themes.getMarkdownTheme(),undefined,1);
+    const normal=row.render(120);chat.addChild(assistant);chat.addChild(row);view=new CompactView(tui,()=>themes.theme);
     const rendered=chat.render(120),plain=rendered.join('\n').replace(/\x1b\[[0-9;]*m/g,'');
     assert.match(plain,/searched latest fact/);assert.match(plain,/viewed web page https:\/\/example.com\/opened/);
+    assert.ok(plain.indexOf('viewed web page')<plain.indexOf('Verified fact.'),'activity precedes the saved response');
+    assert.equal((plain.match(/searched latest fact/g)??[]).length,1,'trailing source summary cannot duplicate activity rows');
     assert.doesNotMatch(plain,/viewed web page https:\/\/example.com\/fact/,'a source hit is not a view');
     assert.ok(rendered.join('\n').includes(themes.theme.fg('mdLink',themes.theme.bold('searched'))));
     view.enabled=false;assert.deepEqual(row.render(120),normal);

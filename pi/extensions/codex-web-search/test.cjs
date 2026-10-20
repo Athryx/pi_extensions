@@ -7,7 +7,7 @@ const {load,host}=require('./test-helper.cjs');
 
 test('tool is selectable, inactive by default, hidden from function declarations and never locally callable',async()=>{
   const {default:extension}=await load('index.ts');const tools=[];
-  extension({registerTool:tool=>tools.push(tool),registerCommand(){},registerMessageRenderer(){},on(){}});
+  extension({events:{emit(){},on(){return()=>{}}},registerTool:tool=>tools.push(tool),registerCommand(){},registerMessageRenderer(){},on(){}});
   const tool=tools[0];assert.equal(tool.name,'web_search');assert.equal(tool.defaultActive,false);assert.equal(tool.exposure,'model-only');
   assert.deepEqual(tool.prepareLoadout(),{hiddenDeclarations:['web_search']});
   const {validateToolArguments}=await host('node_modules/@earendil-works/pi-ai/dist/utils/validation.js');
@@ -63,11 +63,12 @@ test('conversation overrides reset and follow the selected branch',async()=>{
 
 async function fixture(){
   const {default:extension}=await load('index.ts');const handlers=new Map(),entries=[],notices=[],statuses=[],commands=new Map();let active=['web_search'];
+  const {createEventBus}=await host('dist/core/event-bus.js');
   const ctx={model:{provider:'openai',api:'openai-responses',id:'test'},hasUI:true,cwd:'/unused',isProjectTrusted:()=>false,
     sessionManager:{getBranch:()=>entries},ui:{notify:(...a)=>notices.push(a),setStatus:(...a)=>statuses.push(a)}};
-  extension({registerTool(){},registerCommand:(name,value)=>commands.set(name,value),registerMessageRenderer(){},getActiveTools:()=>active,
-    appendEntry:(customType,data)=>entries.push({type:'custom',customType,data}),on:(event,handler)=>handlers.set(event,handler)});
-  const emit=(name,event={})=>handlers.get(name)?.(event,ctx);
+  extension({events:createEventBus(),registerTool(){},registerCommand:(name,value)=>commands.set(name,value),registerMessageRenderer(){},getActiveTools:()=>active,
+    appendEntry:(customType,data)=>entries.push({type:'custom',customType,data}),on:(event,handler)=>handlers.set(event,[...(handlers.get(event)??[]),handler])});
+  const emit=(name,event={})=>{let result;for(const handler of handlers.get(name)??[]){const next=handler(event,ctx);if(next!==undefined)result=next;}return result;};
   return{ctx,emit,entries,notices,statuses,command:args=>commands.get('web-search').handler(args,ctx),select:names=>active=names};
 }
 test('commands toggle the conversation only; selection survives model changes and next request uses new mode',async()=>{
@@ -92,6 +93,7 @@ test('in-flight mode, canceled capture and repeated native events remain isolate
   assert.equal(f.emit('turn_end',{outcome:'completed'}),undefined);
   f.emit('before_provider_request',{payload:{model:'test',input:[]}});f.emit('provider_stream_event',event);f.emit('session_before_tree');assert.equal(f.emit('turn_end',{outcome:'aborted'}),undefined);
   assert.deepEqual(f.statuses.at(-1),['codex-web-search',undefined]);
+  assert.ok(f.statuses.every(([,value])=>value===undefined),'search progress must not add footer status text');
 });
 
 test('native sources, citation ranges and provider terminal fallback produce bounded portable summaries',async()=>{
@@ -123,6 +125,17 @@ test('structured operations distinguish actual opens from search sources and pre
   capture.ingest({type:'response.output_item.done',item:{...open,status:'failed'}});assert.equal(capture.details('live','error').operations[2].status,'failed');
   for(let index=0;index<60;index++)capture.ingest({type:'response.output_item.done',item:{...search,id:'extra'+index}});
   assert.equal(capture.details('live','completed').operations.length,50);
+});
+
+test('native adapter emits generic running placeholders and stable completed/error rows without interpreting sources as opens',async()=>{
+  const {SearchCapture}=await load('output.ts');const capture=new SearchCapture();
+  assert.equal(capture.ingest({type:'response.output_item.added',item:{id:'s',type:'web_search_call',status:'in_progress'}}),true);
+  assert.deepEqual(capture.providerUpdates(),[{id:'s:0',label:'web search',summary:'',status:'running'}]);
+  capture.ingest({type:'response.output_item.done',item:{id:'s',type:'web_search_call',status:'completed',action:{type:'search',queries:['one','two'],sources:[{url:'https://unopened.example/'}]}}});
+  assert.deepEqual(capture.providerUpdates(),[{id:'s:0',label:'searched',summary:'one',status:'completed'},{id:'s:1',label:'searched',summary:'two',status:'completed'}]);
+  capture.ingest({type:'response.output_item.done',item:{id:'p',type:'web_search_call',status:'failed',action:{type:'open_page',url:'https://opened.example/'}}});
+  assert.deepEqual(capture.providerUpdates().at(-1),{id:'p:0',label:'viewed web page',summary:'https://opened.example/',status:'error'});
+  assert.equal(capture.ingest({type:'response.output_text.delta',delta:'later answer'}),false);
 });
 
 test('render caches unchanged rows and invalidates width, theme, expansion, content and explicit invalidation',async()=>{
