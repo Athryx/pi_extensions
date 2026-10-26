@@ -41,7 +41,8 @@ export function validateCheckpoint(entry: CompactionEntry, branch: readonly Sess
   const source = object(data.source);
   if (!compatibility || !["provider", "api", "model", "endpoint", "accountFingerprint"].every(key => text(compatibility[key])) || !/^[a-f0-9]{64}$/.test(compatibility.accountFingerprint as string)) return invalid();
   const adapter = getAdapter({ provider: compatibility.provider as string, api: compatibility.api as string, id: compatibility.model as string, baseUrl: (compatibility.endpoint as string).replace(/\/compact$/, "") });
-  if (!adapter || adapter.endpoint !== compatibility.endpoint) return invalid();
+  if (!adapter || (adapter.endpoint !== compatibility.endpoint
+    && !(adapter.kind === "codex" && `${adapter.endpoint}/compact` === compatibility.endpoint))) return invalid();
   if (!source || !text(source.firstKeptEntryId) || !text(source.summarizedThroughEntryId) || source.firstKeptEntryId !== entry.firstKeptEntryId) return invalid();
   const ownIndex = branch.findIndex(item => item.id === entry.id);
   const keptIndex = branch.findIndex(item => item.id === source.firstKeptEntryId);

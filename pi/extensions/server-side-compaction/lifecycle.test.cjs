@@ -17,14 +17,20 @@ const assistant = (content, extra={}) => ({role:'assistant', content, api:'opena
 
 // Only the compact endpoint is mocked. Generation uses a deterministic registered
 // SDK provider, but still invokes the real request hook and consumes its result.
-async function fixture() {
+async function fixture({codex=false}={}) {
   const sdk = await host('dist/index.js');
   const ai = await host('node_modules/@earendil-works/pi-ai/dist/index.js');
   const {openAIResponsesApi} = await host('node_modules/@earendil-works/pi-ai/dist/api/openai-responses.lazy.js');
+  const {openAICodexResponsesApi} = await host('node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.lazy.js');
+  // Synthetic, unsigned fixture token: no login, credential refresh, or paid calls.
+  const codexKey = `fixture.${Buffer.from(JSON.stringify({'https://api.openai.com/auth':{chatgpt_account_id:'lifecycle-account'}})).toString('base64url')}.fixture`;
+  const providerName = codex ? 'openai-codex' : 'openai';
+  const api = codex ? 'openai-codex-responses' : 'openai-responses';
   async function capturePayload(model, messages) {
     let payload;
-    await openAIResponsesApi().streamSimple(model, {messages:sdk.convertToLlm(messages)}, {
-      apiKey:'serialization-only', transport:'sse',
+    const serializer = model.api==='openai-codex-responses' ? openAICodexResponsesApi() : openAIResponsesApi();
+    await serializer.streamSimple(model, {messages:sdk.convertToLlm(messages)}, {
+      apiKey:codexKey, transport:'sse',
       fetch:async ()=>{throw new Error('Serializer attempted network access');},
       onPayload(value) {payload=structuredClone(value); throw new Error('Captured before HTTP');},
     }).result();
@@ -36,24 +42,35 @@ async function fixture() {
   await mkdir(agentDir);
   const originalFetch = global.fetch, originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  const endpoint = [], requests = [], errors = [];
-  const controls = {endpointStatus:200, summaryError:false, beforeResponse:undefined, generationUsage:undefined, overflowOnce:false, payloadModel:undefined};
+  const endpoint = [], endpointOptions = [], checkpoints = [], requests = [], errors = [];
+  const controls = {endpointStatus:200, streamFailure:false, summaryError:false, beforeResponse:undefined, generationUsage:undefined, overflowOnce:false, payloadModel:undefined};
   global.fetch = async (url, options) => {
-    assert.equal(String(url), 'https://api.openai.com/v1/responses/compact', 'all other network access is forbidden');
+    assert.equal(String(url), codex ? 'https://chatgpt.com/backend-api/codex/responses' : 'https://api.openai.com/v1/responses/compact', 'all other network access is forbidden');
     endpoint.push(JSON.parse(options.body));
+    endpointOptions.push({method:options.method, headers:new Headers(options.headers)});
     if (controls.endpointStatus!==200) return new Response('deterministic endpoint failure', {status:controls.endpointStatus});
+    if (codex) {
+      const checkpoint = {type:'compaction', encrypted_content:`opaque-codex-lifecycle-${endpoint.length}`};
+      checkpoints.push(checkpoint);
+      const output = [BUNDLE[0], checkpoint, {type:'function_call', call_id:'never-execute', name:'unexpected_tool', arguments:'{}'}, BUNDLE[2]];
+      const events = output.map(item=>({type:'response.output_item.done', item}));
+      events.push(controls.streamFailure ? {type:'response.failed', response:{status:'failed'}} :
+        {type:'response.completed', response:{status:'completed', output, usage:{input_tokens:10, output_tokens:5, total_tokens:15}}});
+      return new Response(events.map(event=>`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+        {status:200, headers:{'content-type':'text/event-stream'}});
+    }
     return new Response(JSON.stringify({object:'response.compaction', output:BUNDLE,
       usage:{input_tokens:10, output_tokens:5, total_tokens:15}}), {status:200, headers:{'content-type':'application/json'}});
   };
   const runtime = await sdk.ModelRuntime.create({authPath:join(agentDir,'auth.json'), modelsPath:null, refreshOnCreate:false});
-  const provider = {api:'openai-responses', apiKey:'local-fake-key', baseUrl:'https://api.openai.com/v1',
+  const provider = {api, apiKey:codex ? codexKey : 'local-fake-key', baseUrl:codex ? 'https://chatgpt.com/backend-api' : 'https://api.openai.com/v1',
     models:[{id:'local', name:'Local', reasoning:false, input:['text'], contextWindow:128000, maxTokens:1024,
       cost:{input:0, output:0, cacheRead:0, cacheWrite:0}}],
     streamSimple(model, context, options) {
       const stream = ai.createAssistantMessageEventStream();
       queueMicrotask(async () => {
         try {
-          const raw = await capturePayload({...model, api:'openai-responses'}, context.messages);
+          const raw = await capturePayload(model, context.messages);
           if (controls.payloadModel) raw.model=controls.payloadModel;
           const replacement = await options?.onPayload?.(raw, model);
           // Do not ignore the poison proxy on a blocked request (Pi hooks are fail-open).
@@ -74,9 +91,9 @@ async function fixture() {
       return stream;
     },
   };
-  runtime.registerProvider('openai', provider);
+  runtime.registerProvider(providerName, provider);
   runtime.registerProvider('other-local', {...provider, baseUrl:'https://unused.invalid'});
-  const model = runtime.getModelOfType('chat','openai','local');
+  const model = runtime.getModelOfType('chat',providerName,'local');
   const target = runtime.getModelOfType('chat','other-local','local');
   let manager = sdk.SessionManager.create(dir, join(dir,'sessions'));
   const toolText = 'TOOL-BEGIN:' + 'unabridged result '.repeat(700) + ':TOOL-END';
@@ -88,6 +105,7 @@ async function fixture() {
     {role:'user', content:'TAIL-USER '+ 'recent '.repeat(100), timestamp:3},
     assistant([{type:'text',text:'TAIL-ASSISTANT '+ 'recent '.repeat(100)}]),
   ];
+  if (codex) for (const message of source) if (message.role==='assistant') Object.assign(message, {api, provider:providerName});
   for (const message of source) manager.appendMessage(message);
   const settings = sdk.SettingsManager.inMemory({compaction:{enabled:false, keepRecentTokens:100, reserveTokens:1024}, retry:{enabled:false}});
   let session;
@@ -102,7 +120,7 @@ async function fixture() {
     return session;
   }
   await open();
-  return {sdk, endpoint, requests, errors, controls, settings, model, target, toolText, capturePayload, source,
+  return {sdk, endpoint, endpointOptions, checkpoints, requests, errors, controls, settings, model, target, toolText, capturePayload, source,
     get manager() {return manager;},
     get session() {return session;}, async reopen(enabled=true) {
       session.dispose();
@@ -124,6 +142,119 @@ async function encrypted(f) {
   return entry;
 }
 const asText = value => JSON.stringify(value);
+
+async function assertCodexReplay(f, entry) {
+  const request = f.requests.at(-1);
+  assert.equal(request.context.messages.some(m=>m.role==='assistant' && m.stopReason==='error'),false);
+  const raw = await f.capturePayload(f.model, request.context.messages);
+  const marker = raw.input.findIndex(item=>asText(item).includes(entry.summary));
+  assert.ok(marker>=0, 'real serializer receives the persisted checkpoint marker');
+  assert.deepEqual(request.payload.input, JSON.parse(JSON.stringify([
+    ...raw.input.slice(0,marker), ...entry.details.output, ...raw.input.slice(marker+1),
+  ])), 'checkpoint replaces only the marker, leaving the real serialized tail unchanged');
+  assert.deepEqual(request.payload.input.filter(item=>item.type==='compaction'), [entry.details.output.at(-1)]);
+  assert.doesNotMatch(asText(request.payload), /compaction_trigger|Server-side OpenAI checkpoint|Server retained prelude|Server retained epilogue|unexpected_tool|never-execute/);
+  assert.equal(f.session.messages.at(-1).stopReason,'stop', 'normal deterministic generation completed');
+}
+
+function assertCodexBundle(f, index, entry) {
+  const request = f.endpoint[index];
+  assert.equal(f.endpointOptions[index].method,'POST');
+  assert.equal(f.endpointOptions[index].headers.get('chatgpt-account-id'),'lifecycle-account');
+  assert.equal(f.endpointOptions[index].headers.get('accept'),'text/event-stream');
+  assert.match(f.endpointOptions[index].headers.get('x-codex-beta-features'), /remote_compaction_v2/);
+  assert.equal(request.stream,true);
+  assert.equal(request.store,false);
+  assert.deepEqual(request.input.at(-1),{type:'compaction_trigger'});
+  assert.equal(request.input.filter(item=>item.type==='compaction_trigger').length,1);
+  assert.deepEqual(entry.details.output,[...request.input.filter(item=>item.role==='user'), f.checkpoints[index]],
+    'saved bundle preserves every serialized original user, not generated assistant/tool output');
+}
+
+test('installed Codex serializer compacts with V2 SSE and replays original users plus checkpoint before and after resume, including repeated compaction', async () => {
+  const f = await fixture({codex:true});
+  try {
+    const first = await encrypted(f);
+    assertCodexBundle(f,0,first);
+    assert.ok(f.manager.getSessionFile(), 'Codex checkpoint is file-backed');
+    const entries = f.manager.getBranch();
+    const boundary = entries.findIndex(e=>e.id===first.firstKeptEntryId);
+    const prefix = entries.slice(0,boundary).filter(e=>e.type==='message').map(e=>e.message);
+    const serialized = await f.capturePayload(f.model,[{role:'system',content:f.session.systemPrompt,timestamp:0}, ...prefix]);
+    assert.deepEqual(f.endpoint[0].input.slice(0,-1),JSON.parse(JSON.stringify(serialized.input)));
+    assert.ok(asText(f.endpoint[0].input).includes(f.toolText), 'Codex compaction gets complete tool output');
+    assert.doesNotMatch(asText(f.endpoint[0].input),/TAIL-ASSISTANT/);
+    await f.session.prompt('CODEX-FIRST-GENERATION');
+    await assertCodexReplay(f,first);
+    await f.reopen();
+    await f.session.prompt('CODEX-RESUMED-GENERATION');
+    await assertCodexReplay(f,first);
+    assert.equal(f.endpoint.length,1, 'resume reuses the persisted checkpoint without recompacting');
+    await f.session.compact();
+    const second = latest(f);
+    assert.notEqual(second.id,first.id);
+    assert.equal(f.endpoint.length,2);
+    assertCodexBundle(f,1,second);
+    const originalUsers = first.details.output.filter(item=>item.role==='user');
+    assert.deepEqual(second.details.output.filter(item=>item.role==='user').slice(0,originalUsers.length),originalUsers);
+    assert.deepEqual(f.endpoint[1].input.filter(item=>item.type==='compaction'),[f.checkpoints[0]], 'second compaction consumes the prior encrypted checkpoint once');
+    await f.reopen();
+    await f.session.prompt('CODEX-AFTER-SECOND-COMPACTION');
+    await assertCodexReplay(f,second);
+    const input = f.requests.at(-1).payload.input;
+    for (const text of ['Original secret fact: purple kestrel.', 'TAIL-USER', 'CODEX-FIRST-GENERATION', 'CODEX-RESUMED-GENERATION', 'CODEX-AFTER-SECOND-COMPACTION']) {
+      assert.equal(input.filter(item=>asText(item).includes(text)).length,1, `${text} occurs exactly once across saved prefix and retained tail`);
+    }
+    assert.doesNotMatch(asText(input),/opaque-codex-lifecycle-1/);
+  } finally {await f.cleanup();}
+});
+
+for (const failure of ['404','503','stream']) test(`installed Codex ${failure} compaction failure falls back to readable native summary`, async () => {
+  const f = await fixture({codex:true});
+  try {
+    await f.session.prompt('/compaction server');
+    if (failure==='stream') f.controls.streamFailure=true;
+    else f.controls.endpointStatus=Number(failure);
+    await f.session.compact();
+    assert.equal(f.endpoint.length,1);
+    assert.notEqual(latest(f).details?.kind,'server-side-compaction');
+    assert.match(latest(f).summary,/Readable checkpoint/);
+    assert.ok(f.requests.length>0);
+    assert.match(asText(f.requests.map(r=>r.context)),/purple kestrel|TOOL-BEGIN:/);
+    assert.doesNotMatch(asText(f.requests),/compaction_trigger|opaque-codex-lifecycle|Server-side OpenAI checkpoint/);
+    assert.ok(f.manager.getBranch().some(e=>e.type==='custom' && /Falling back/.test(e.data?.message ?? '')));
+    await f.session.prompt('Continue after readable fallback.');
+    assert.equal(f.session.messages.at(-1).stopReason,'stop');
+  } finally {await f.cleanup();}
+});
+
+for (const failure of ['404','stream']) test(`installed Codex ${failure} failure over encrypted checkpoint reconstructs readable original history`, async () => {
+  const f = await fixture({codex:true});
+  try {
+    const original = await encrypted(f);
+    await f.reopen();
+    await f.session.prompt('Newer Codex fact survives failed re-compaction.');
+    const before = f.requests.length;
+    if (failure==='stream') f.controls.streamFailure=true;
+    else f.controls.endpointStatus=404;
+    await f.session.compact();
+    assert.equal(f.endpoint.length,2);
+    assert.notEqual(latest(f).id,original.id);
+    assert.notEqual(latest(f).details?.kind,'server-side-compaction');
+    assert.match(latest(f).summary,/Readable checkpoint/);
+    assert.match(latest(f).summary,/facts\.txt/);
+    const readable = f.requests.slice(before);
+    assert.ok(readable.length>0);
+    assert.match(asText(readable.map(r=>r.context)),/purple kestrel/);
+    assert.match(asText(readable.map(r=>r.context)),/TOOL-BEGIN:/, 'native fallback reconstructs readable tool history behind ciphertext');
+    assert.doesNotMatch(asText(readable),/Server-side OpenAI checkpoint|opaque-codex-lifecycle|compaction_trigger/);
+    await f.reopen();
+    await f.session.prompt('Continue with readable Codex summary after resume.');
+    assert.ok(asText(f.requests.at(-1).payload).includes(READABLE));
+    assert.doesNotMatch(asText(f.requests.at(-1).payload),/opaque-codex-lifecycle|compaction_trigger/);
+    assert.equal(f.session.messages.at(-1).stopReason,'stop');
+  } finally {await f.cleanup();}
+});
 
 test('installed SDK persists exact structured prefix and replays ordered output once with unchanged retained tail, including resume', async () => {
   const f = await fixture();

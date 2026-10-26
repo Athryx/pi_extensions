@@ -47,6 +47,13 @@ test('Codex uses its public original payload builder without any network access'
   assert.equal(payload.input[0].content[0].text,'original content');
 });
 
+test('Codex streaming input budget includes serialized tool definitions',async()=>{
+  const {assertPrefixBudget}=await load('serialize.ts');
+  const payload={input:[{role:'user',content:'small'}],tools:[{description:'x'.repeat(1000)}]};
+  assert.throws(()=>assertPrefixBudget(payload,{...model,api:'openai-codex-responses',contextWindow:100}),/budget/);
+  assert.doesNotThrow(()=>assertPrefixBudget(payload,{...model,contextWindow:100}));
+});
+
 test('checkpoint replay is exact-once, independent of next policy, and never reuses old response chain',async()=>{
   const {replay}=await load('serialize.ts');
   const marker='Server-side OpenAI checkpoint [uuid]'; const output=[{role:'user',content:'older preserved user'},{type:'compaction',encrypted_content:'opaque'}];

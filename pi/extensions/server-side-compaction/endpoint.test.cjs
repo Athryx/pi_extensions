@@ -29,7 +29,7 @@ test('official provider/API/host/path allowlist and suffix normalization', async
   for (const baseUrl of ['https://api.openai.com.evil/v1', 'http://api.openai.com/v1', 'https://x@api.openai.com/v1', 'https://api.openai.com/v1?x=1', 'https://api.openai.com/custom', 'https://api.openai.com:8443/v1']) assert.equal(getAdapter({ ...model, baseUrl }), undefined);
   for (const provider of ['azure-openai', 'openrouter', 'custom']) assert.equal(getAdapter({ ...model, provider }), undefined);
   assert.equal(getAdapter({ ...model, api: 'openai-completions' }), undefined);
-  for (const suffix of ['', '/codex', '/codex/responses']) assert.equal(getAdapter({ ...model, provider: 'openai-codex', api: 'openai-codex-responses', baseUrl: `https://chatgpt.com/backend-api${suffix}` }).endpoint, 'https://chatgpt.com/backend-api/codex/responses/compact');
+  for (const suffix of ['', '/codex', '/codex/responses']) assert.equal(getAdapter({ ...model, provider: 'openai-codex', api: 'openai-codex-responses', baseUrl: `https://chatgpt.com/backend-api${suffix}` }).endpoint, 'https://chatgpt.com/backend-api/codex/responses');
 });
 
 test('strict config, merged exact precedence, effective agent dir and trust', async () => {

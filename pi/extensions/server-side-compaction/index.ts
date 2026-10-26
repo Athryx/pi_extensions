@@ -196,7 +196,7 @@ export default function (pi: ExtensionAPI) {
           const instructions = event.customInstructions ? `${payload.instructions ?? ""}\n\nCompaction focus: ${event.customInstructions}`.trim() : payload.instructions;
           const result = await compactPrefix({ ctx, model, input: payload.input, instructions, signal: event.signal,
             timeoutMs: config.timeoutMs, maxResponseBytes: config.maxResponseBytes,
-            prompt_cache_key: payload.prompt_cache_key, prompt_cache_retention: payload.prompt_cache_retention });
+            requestSettings: payload, prompt_cache_key: payload.prompt_cache_key, prompt_cache_retention: payload.prompt_cache_retention });
           if (event.signal.aborted || generation !== epoch) return { cancel: true };
           const marker = markerForCheckpoint(randomUUID());
           const cut = event.branchEntries.findIndex(e => e.id === event.preparation.firstKeptEntryId);

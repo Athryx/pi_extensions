@@ -87,6 +87,7 @@ export async function serializePrefix(ctx: ExtensionContext, model: Model<Api>, 
 
 /** Conservative safety check; never shorten original contents to make server compaction fit. */
 export function assertPrefixBudget(payload: Payload, model: Model<Api>): void {
-  const estimate = Math.ceil(JSON.stringify(payload.input).length / 3) + Math.ceil((payload.instructions?.length ?? 0) / 3);
+  const estimate = Math.ceil(JSON.stringify(payload.input).length / 3) + Math.ceil((payload.instructions?.length ?? 0) / 3)
+    + (model.api === "openai-codex-responses" ? Math.ceil(JSON.stringify(payload.tools ?? []).length / 3) : 0);
   if (model.contextWindow > 0 && estimate >= model.contextWindow) throw new Error("Original structured prefix exceeds the conservative server input budget; using Pi.");
 }

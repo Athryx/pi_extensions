@@ -47,6 +47,25 @@ test('only latest projected encrypted checkpoint is active', async () => {
   assert.equal(checkpoint(entries), undefined);
 });
 
+test('Codex legacy and streaming checkpoints validate without weakening endpoint/account scope', async () => {
+  const { checkpoint } = await checkpoints;
+  const { compareCompatibility } = await load('openai.ts');
+  const entries = branch();
+  const key = entries[2].details.compatibility;
+  Object.assign(key, { provider: 'openai-codex', api: 'openai-codex-responses', endpoint: 'https://chatgpt.com/backend-api/codex/responses/compact' });
+  assert.equal(checkpoint(entries).entry.id, 'c');
+  const current = { ...key, endpoint: 'https://chatgpt.com/backend-api/codex/responses' };
+  assert.equal(compareCompatibility(key, current), true);
+  assert.equal(compareCompatibility(current, key), true);
+  for (const patch of [{ model: 'other' }, { accountFingerprint: 'b'.repeat(64) }, { endpoint: current.endpoint + '/other' }, { provider: 'custom' }]) {
+    assert.equal(compareCompatibility(key, { ...current, ...patch }), false);
+  }
+  Object.assign(key, current);
+  assert.equal(checkpoint(entries).entry.id, 'c');
+  key.endpoint += '/compact/compact';
+  assert.throws(() => checkpoint(entries), /invalid|missing/);
+});
+
 test('reconstruction restores older source once, excludes kept tail and markers', async () => {
   const { reconstructPrefix, reconstructReadableProjection } = await checkpoints;
   const entries = branch();

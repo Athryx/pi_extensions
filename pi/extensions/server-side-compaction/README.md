@@ -12,16 +12,20 @@ current instructions/tools + endpoint checkpoint bundle + unchanged Pi recent ta
 
 The request uses Pi's original structured older prefix, including previous checkpoints, full tool outputs, images and reasoning signatures. It does **not** use Pi's readable-summary prompt, conversation-to-text serialization or 2,000-character tool-output truncation. The retained recent tail is not sent to the endpoint. Prefix fidelity follows the installed provider's normal normalization; arbitrary later extension transformations can still differ. No cache hit or shared generation/compaction KV cache is guaranteed.
 
-All validated endpoint output is replayed in order, including preserved older user messages as well as the encrypted item. Ciphertext is never decoded or treated as text. Current tools/system state and new messages are preserved independently of the checkpoint.
+For API-key compaction, all validated endpoint output is replayed in order. For Codex V2, the extension retains original prefix user messages locally and appends the single encrypted item; other generated output is ignored, never replayed or executed. Ciphertext is never decoded or treated as text. Current tools/system state and new messages are preserved independently of the checkpoint.
 
 Official adapters only:
 
 - `openai` + `openai-responses`: `https://api.openai.com/v1/responses/compact`.
-- `openai-codex` + `openai-codex-responses`: `https://chatgpt.com/backend-api/codex/responses/compact`, when supported by the account/model/backend.
+- `openai-codex` + `openai-codex-responses`: streaming `https://chatgpt.com/backend-api/codex/responses` with a terminal `{ "type": "compaction_trigger" }` input item and the `remote_compaction_v2` beta feature. Uses the captured provider's tools, reasoning/text settings and session cache key. A successful stream must contain exactly one encrypted compaction item and `response.completed`; incomplete/error/truncated streams cannot replace a checkpoint. No legacy endpoint probe or transport retry is performed.
 
-Azure, Chat Completions, arbitrary proxies/hosts and other providers fall back to Pi. The Codex unary route is conditional; this extension does not implement Codex CLI's newer streamed `compaction_trigger` flow. Real API-key and Codex endpoint availability has **not** been validated by the deterministic tests.
+Codex V2 follows the request/collector contract in OpenAI Codex commit `970111f6cb62cc02fe36a82ea7d71b37a2889c97` (`compact_remote_v2_attempt.rs`, `compact_remote_v2.rs`, `client.rs`). Unlike the Codex CLI's bounded user-retention policy, this extension retains **all original prefix user items verbatim**, including images and custom/context messages serialized as users. It does not silently truncate/drop older user messages or synthesize Codex-only provenance/window metadata. User-heavy histories may therefore shrink less, or eventually require readable Pi compaction. Pi's recent tail remains separate and is not duplicated in this bundle.
 
-Endpoint errors, unknown response types, unsupported transport overrides, and conservatively over-budget prefixes visibly fall back to readable Pi compaction. No silent shortening or endpoint retry loop. Cancellation cancels instead of starting fallback work. If an encrypted checkpoint exists, fallback reconstructs the original readable history rather than summarizing a placeholder. Failed conversion preserves the old checkpoint.
+Existing Codex checkpoints tagged with the old `/responses/compact` endpoint remain readable/replayable with the same model/account; newly saved checkpoints use `/responses`. No ciphertext conversion or source-history deletion occurs.
+
+Azure, Chat Completions, arbitrary proxies/hosts and other providers fall back to Pi. Deterministic tests validate the installed Pi integration and wire fixtures, **not** live endpoint entitlement/cache behavior. Live subscription testing is separate and opt-in.
+
+Endpoint errors, malformed/unsupported checkpoints, unsupported transport overrides, and conservatively over-budget prefixes visibly fall back to readable Pi compaction. No silent shortening or endpoint retry loop. Cancellation cancels instead of starting fallback work. If an encrypted checkpoint exists, fallback reconstructs the original readable history rather than summarizing a placeholder. Failed conversion preserves the old checkpoint.
 
 ## Commands
 
@@ -45,7 +49,7 @@ Encrypted checkpoints are conservatively scoped to provider/API/model/endpoint/a
 
 **Before disabling/uninstalling this extension, run `/compaction portable`.** Its readable summary is saved as a real model-visible custom message, so stock Pi can still read it. While the extension is loaded it projects that text into the original summary slot, avoiding duplicate context. Disabling without conversion leaves only a nonsemantic marker in stock Pi's summary slot and loses the encrypted prefix from model context (original session log remains stored).
 
-**Accounting limitation:** regular server/native compaction usage is included in Pi totals. Standalone portability conversion (including accepted model-switch conversion) records its usage once in the portable message's `details.usage`, with a visible notice, but **Pi's native cost totals do not include it**: its public extension API has no standalone usage-append operation. This limitation is explicitly approved and is not described as free usage.
+**Accounting limitation:** successful server/native compaction usage is included in Pi totals when the server supplies it. Failed server attempts may still consume subscription/API usage, but their usage is not included in Pi's successful-compaction totals (including a stream that completes but fails checkpoint validation before falling back). Standalone portability conversion (including accepted model-switch conversion) records its usage once in the portable message's `details.usage`, with a visible notice, but **Pi's native cost totals do not include it**: its public extension API has no standalone usage-append operation. This limitation is explicitly approved and is not described as free usage.
 
 Conversion requires original source history. Missing/corrupt anchors block replay/conversion instead of silently dropping history; navigate/recover the source branch if needed. Context edits to a portable record (including deletion) are rejected rather than resurrecting stale summary text; restore that record/source branch before continuing. Large histories use ordered bounded readable-summary chunks; indivisible oversized tool groups fail safely.
 
@@ -68,7 +72,7 @@ Optional extension-owned files (never created automatically):
 
 Precedence: branch command > exact `provider/modelId` > provider > configured mode > built-in `auto`. Project values override user values; override maps merge by exact key. Unknown keys/invalid values disable server selection with a warning, even if a branch requested server. Timeout range: 1,000–600,000 ms; response limit: 1 KiB–128 MiB; configuration files limited to 1 MiB.
 
-Authentication uses Pi's fresh credential resolver; never copies auth.json. Tokens are not persisted. Account/key fingerprints and output ciphertext are stored in session checkpoint details; preserved endpoint user messages are ordinary session data. API-key rotation is conservatively treated as a compatibility change. Redirects/foreign resolved endpoints are rejected, auth/response bodies are not echoed. Provider-specific `auth.env` transport overrides are unsupported and trigger Pi fallback. Requests use Node's global fetch; no claim is made of parity with all Pi-managed proxy/transport settings.
+Authentication uses Pi's fresh credential resolver; never copies auth.json. Tokens are not persisted. Account/key fingerprints and output ciphertext are stored in session checkpoint details; preserved endpoint user messages are ordinary session data. API-key rotation is conservatively treated as a compatibility change. Redirects/foreign resolved endpoints are rejected, auth/response bodies are not echoed. Provider-specific `auth.env` transport overrides are unsupported and trigger Pi fallback. Requests use Node's global fetch (Codex SSE, not WebSocket); no claim is made of parity with all Pi-managed proxy/transport settings.
 
 ## Subagents and noninteractive modes
 
@@ -84,4 +88,4 @@ node pi/extensions/server-side-compaction/check-types.cjs
 node --test tests/pi-compatibility.cjs
 ```
 
-The strict type check reuses the existing `subagents` development TypeScript dependency (install via the repository's documented setup if absent). Tests use installed Pi sessions, real provider serialization, deterministic fake providers and mocked HTTP—no paid calls. They cover workers, prefix fidelity, endpoint validation, reconstruction and safe switching. Real-terminal confirmation/cancel/accept was exercised with the disposable `smoke.cjs` fixture; captures are in `plans/artifacts/compaction-*.{txt,svg}`. Live endpoint availability/cache behavior still requires separate opt-in manual checks.
+The strict type check reuses the existing `subagents` development TypeScript dependency (install via the repository's documented setup if absent). Tests use installed Pi sessions, real provider serialization, deterministic fake providers and mocked HTTP—no paid calls. They cover workers, prefix fidelity, unary/SSE endpoint validation, fragmented UTF-8/SSE framing, stream completion/limits/cancellation, retained-user replay, reconstruction and safe switching. Real-terminal confirmation/cancel/accept was exercised with the disposable `smoke.cjs` fixture; captures are in `plans/artifacts/compaction-*.{txt,svg}`. Live endpoint availability/cache behavior still requires separate opt-in manual checks.
