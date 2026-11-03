@@ -157,6 +157,8 @@ export default function subagents(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => start(ctx, "tree"));
   pi.on("session_shutdown", async () => { clearBar(); clearViews(); await workspace?.close(); workspace = undefined; lockedTemplate = undefined; });
   pi.on("before_agent_start", (event, ctx) => {
+    // Identity/skills apply to user prompts AND idle custom-message resumes (Pi >= 1.2).
+    // Run setup is already busy here; neither messageType nor ctx.isIdle() is a guard.
     if (!workspace || isWorkerSession(ctx.sessionManager)) return;
     const root = workspace.get("main");
     root.context = ctx;

@@ -71,6 +71,32 @@ test('spawning workers receive allowed child descriptions in the actual request'
   } finally {await f.cleanup();}
 });
 
+test('worker identity modifiers accept user and custom before_agent_start events', async()=>{
+  const f=await fixture();
+  try {
+    await f.workspace.create('main','coordinator','initial task','leader');
+    const record=f.workspace.get('coordinator');
+    await until(()=>!record.busy);
+    f.templates.get('subagent').description='Updated child description';
+    for (const trigger of [
+      {messageType:'user',prompt:'follow-up',images:[]},
+      {messageType:'custom',message:{role:'custom',customType:'test.resume',content:'resume',display:false,timestamp:1}},
+    ]) {
+      record.template.prompt='Updated '+trigger.messageType+' instructions';
+      const event={type:'before_agent_start',...trigger,systemPrompt:'',systemPromptOptions:{sections:{unrelated:'retained'}}};
+      if(trigger.messageType==='custom') for(const name of ['prompt','images']) Object.defineProperty(event,name,{get(){throw new Error('Custom runs have no '+name);}});
+      await record.session.extensionRunner.emit(event);
+      assert.equal(event.systemPromptOptions.sections.unrelated,'retained');
+      assert.match(event.systemPromptOptions.sections.agent_identity,/Name: coordinator\. Role: worker\. Parent: main/);
+      assert.equal(event.systemPromptOptions.sections.agent_instructions,record.template.prompt);
+      assert.match(event.systemPromptOptions.sections.agent_workspace,/subagent — Updated child description/);
+    }
+    await f.workspace.send('main','coordinator','idle custom-message resume');
+    await until(()=>f.received.length===2 && !record.busy);
+    assert.match(f.ai.getCurrentSystemPrompt(f.requests.at(-1).messages),/Name: coordinator\. Role: worker\. Parent: main/);
+  } finally {await f.cleanup();}
+});
+
 test('real SDK worker lifecycle, separate files, filtered extensions, resume and restore', async()=>{
   const f=await fixture({disk:true});
   let release; f.setGate(new Promise(r=>release=r));

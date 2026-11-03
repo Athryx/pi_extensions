@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const {mkdtemp, mkdir, writeFile, readFile, rm} = require('node:fs/promises');
 const {join} = require('node:path');
 const {tmpdir} = require('node:os');
-const {host} = require('./test-helper.cjs');
+const {host, root} = require('./test-helper.cjs');
+const [hostMajor, hostMinor] = require(join(root, 'package.json')).version.split('.').map(Number);
+const customRunSetup = hostMajor > 1 || (hostMajor === 1 && hostMinor >= 2);
 const LOCK = 'subagents.main-template-lock.v1';
 const TEMPLATE = 'subagents.template.v1';
 const IDENTITY = 'subagents.identity.v1';
@@ -20,7 +22,7 @@ async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', n
   process.env.PI_CODING_AGENT_DIR = agentDir;
   let session;
   const errors = [], notifications = [], menus = [], requests = [], viewed = [];
-  const f = {dir, agentDir, sdk, errors, notifications, menus, requests, viewed, choice: 'leaf'};
+  const f = {dir, agentDir, sdk, errors, notifications, menus, requests, viewed, setups: [], choice: 'leaf'};
   async function closeSession() {
     if (session) {
       await session.extensionRunner.emit({type: 'session_shutdown', reason: 'quit'});
@@ -63,6 +65,7 @@ async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', n
     const model = runtime.getModelOfType('chat', 'main-lock-test', 'model');
     const loader = new sdk.DefaultResourceLoader({cwd: dir, agentDir, settingsManager: settings, noExtensions: true, additionalExtensionPaths: [join(__dirname, 'index.ts')], extensionFactories: [pi => {
       pi.events.on('ui:viewed-session:request:v1', request => request.reply({version: 1, available: true, setViewedSession(source) { viewed.push(source); return true; }, getViewedSession: () => undefined, onChange: () => () => {}}));
+      pi.on('before_agent_start', (event, ctx) => f.setups.push({messageType: event.messageType, idle: ctx.isIdle()}));
     }]});
     await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
     f.manager = disk ? sdk.SessionManager.create(dir, join(dir, 'sessions')) : sdk.SessionManager.inMemory(dir);
@@ -82,6 +85,7 @@ async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', n
     f.hasCommand = name => !!session.extensionRunner.getCommand(name);
     f.emit = event => session.extensionRunner.emit(event);
     f.prompt = text => session.prompt(text);
+    f.custom = content => session.sendCustomMessage({customType: 'test.resume', content, display: false}, {triggerTurn: true});
     f.reload = () => session.reload();
     f.tools = () => session.getActiveToolNames();
     // Inspect durable selection state, not a hidden workspace tool on a leaf root.
@@ -101,6 +105,28 @@ async function fixture({disk = false, ui = false, seed, defaultAgent = 'main', n
     return f;
   } catch (error) { await f.cleanup(); throw error; }
 }
+
+test('idle custom-message turns apply main modifiers without locking the template', {skip: !customRunSetup && 'Custom run setup requires Pi >= 1.2'}, async () => {
+  const f = await fixture();
+  try {
+    const ai = await host('node_modules/@earendil-works/pi-ai/dist/index.js');
+    await writeFile(join(f.agentDir, 'agents/main.yaml'), 'name: main\nprompt: MAIN_RUN_INSTRUCTIONS\nsubagents: {extra: [subagent], default: subagent}');
+    await f.reload();
+    await f.custom('First custom turn before any user input');
+    assert.deepEqual(f.locks(), []);
+    assert.equal(f.requests.length, 1);
+    assert.match(ai.getCurrentSystemPrompt(f.requests[0].context.messages), /Name: main\. Role: interactive\. Parent: none/);
+    assert.match(ai.getCurrentSystemPrompt(f.requests[0].context.messages), /MAIN_RUN_INSTRUCTIONS/);
+    await f.command('leaf'); // A custom turn must not count as a user template lock.
+    await f.prompt('User turn locks leaf');
+    await f.custom('Resume idle main');
+    assertLocked(f);
+    assert.equal(f.requests.length, 3);
+    assert.deepEqual(f.setups, [{messageType:'custom', idle:false}, {messageType:'user', idle:false}, {messageType:'custom', idle:false}]);
+    assert.match(ai.getCurrentSystemPrompt(f.requests.at(-1).context.messages), /No child templates are allowed/);
+    assert.deepEqual(f.errors, []);
+  } finally { await f.cleanup(); }
+});
 
 test('configured default selects a fresh session, but saved selection and locks win on reload', async () => {
   const f = await fixture({defaultAgent: 'hidden'});

@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { realpathSync } = require('node:fs');
 const root = join(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim()), '../..');
-const esbuild = require(require.resolve('esbuild', { paths: [root] }));
+const esbuild = require(require.resolve('esbuild', { paths: [join(__dirname, '../subagents'), root] }));
 
 async function load() {
   const result = await esbuild.build({ entryPoints: [join(__dirname, 'index.ts')], bundle: true, platform: 'node', format: 'cjs', write: false,
@@ -52,6 +52,7 @@ test('tools validate goal, reason, resume and clearing', async () => {
   const h = harness(await load());
   assert.equal(h.tools.set_goal.parameters.additionalProperties, false);
   assert.equal(h.tools.set_goal_status.parameters.additionalProperties, false);
+  await assert.rejects(call(h, 'set_goal_status', { status: 'invalid' }), /Invalid goal status/);
   assert.match((await call(h, 'set_goal_status', { status: 'blocked', reason: 'failed' })).content[0].text, /No current goal/);
   assert.match((await call(h, 'set_goal', { goal: '  ' })).content[0].text, /nonempty/);
   assert.equal(h.entries.length, 0);

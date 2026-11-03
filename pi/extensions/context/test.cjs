@@ -7,7 +7,7 @@ const { pathToFileURL } = require('node:url');
 
 const root = resolve(dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim())), '../..');
 const host = path => import(pathToFileURL(join(root, path)).href);
-const esbuild = require(require.resolve('esbuild', { paths: [root] }));
+const esbuild = require(require.resolve('esbuild', { paths: [join(__dirname, '../subagents'), root] }));
 const packages = Promise.all([
   host('dist/index.js'),
   host('node_modules/@earendil-works/pi-ai/dist/index.js'),

@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const piRoot = path.resolve(path.dirname(fs.realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim())), '../..');
-const esbuild = require(require.resolve('esbuild', { paths: [piRoot] }));
+const esbuild = require(require.resolve('esbuild', { paths: [path.join(__dirname, '../subagents'), piRoot] }));
 
 // This standalone test replaces only Pi's agent-dir helper; the tools and shell
 // implementation are compiled from the actual extension sources.
@@ -55,7 +55,7 @@ test('bash tools reject unknown argument names', async () => {
       [interact, { session_name: 'bash1', yield_timeout_ms: 60000, extra: 1 }],
       [close, { session_name: 'bash1', yield_time_ms: 60000 }],
     ]) {
-      assert.throws(() => validateToolArguments(tool, { name: tool.name, arguments: tool.prepareArguments ? tool.prepareArguments(args) : args }), /Validation failed.*must not have additional properties/s);
+      assert.throws(() => validateToolArguments(tool, { name: tool.name, arguments: tool.prepareArguments ? tool.prepareArguments(args) : args }), /Validation failed.*(?:must not have additional properties|unknown field)/s);
     }
   } finally { assert.deepEqual(await shutdown(), []); }
 });

@@ -7,7 +7,7 @@ const { tmpdir } = require('node:os');
 const { join, resolve, dirname } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const root = resolve(dirname(realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim())), '../..');
-const esbuild = require(require.resolve('esbuild', { paths: [root] }));
+const esbuild = require(require.resolve('esbuild', { paths: [join(__dirname, '../subagents'), root] }));
 async function load(file) {
   const agent = await import(pathToFileURL(join(root, 'dist/index.js')).href);
   const result = await esbuild.build({ entryPoints: [join(__dirname, file)], bundle: true, write: false, platform: 'node', format: 'cjs', external: ['@earendil-works/pi-coding-agent'] });

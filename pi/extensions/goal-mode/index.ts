@@ -104,6 +104,9 @@ export default function (pi: ExtensionAPI) {
         reason: Type.Optional(Type.String({ description: "Explanation including evidence when completed or blocked" })),
       }, { additionalProperties: false }),
       async execute(_id, params, _signal, _update, ctx) {
+        if (params.status !== "running" && params.status !== "completed" && params.status !== "blocked") {
+          throw new Error("Invalid goal status");
+        }
         const message = setStatus(ctx, params.status, params.reason, true);
         return { content: [{ type: "text", text: message }], details: undefined };
       },

@@ -51,7 +51,10 @@ export async function readableSummary(ctx: ExtensionContext, model: Model<Api>, 
   for (const chunk of chunks) {
     if (signal.aborted) throw new Error("Compaction cancelled.");
     const result = await generateSummaryWithUsage(chunk, model, reserve, undefined, undefined, signal, instructions, text,
-      ctx.thinkingLevel, (_model, context, options) => ctx.modelRegistry.streamSimple(model, context, options));
+      // Pi 1.4 ignores the positional reserve argument and uses model.maxTokens.
+      // Enforce the output bound used above for both the request and carried summary.
+      ctx.thinkingLevel, (_model, context, options) => ctx.modelRegistry.streamSimple(model, context,
+        { ...options, maxTokens: Math.min(options?.maxTokens ?? reserve, reserve) }));
     if (!result.text.trim()) throw new Error("Portability summarization returned an empty summary.");
     text = result.text; usage = addUsage(usage, result.usage);
   }

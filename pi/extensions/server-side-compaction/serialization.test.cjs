@@ -7,7 +7,7 @@ const {pathToFileURL} = require('node:url');
 const root=resolve(dirname(realpathSync(execFileSync('which',['pi'],{encoding:'utf8'}).trim())),'../..');
 const host=p=>import(pathToFileURL(join(root,p)).href);
 const modules=Promise.all([host('dist/index.js'),host('node_modules/@earendil-works/pi-ai/dist/compat.js')]);
-const esbuild=require(require.resolve('esbuild',{paths:[root]}));
+const esbuild=require(require.resolve('esbuild',{paths: [join(__dirname, '../subagents'), root]}));
 async function load(file) {
   const [sdk,ai]=await modules;
   const output=await esbuild.build({entryPoints:[join(__dirname,file)],bundle:true,write:false,platform:'node',format:'cjs',external:['@earendil-works/pi-coding-agent','@earendil-works/pi-ai']});
@@ -76,6 +76,28 @@ test('fail-closed payload stops real OpenAI and Codex provider implementations b
     assert.equal(result.stopReason,'error'); assert.match(result.errorMessage,/conversion required/);
   }
   assert.equal(attempts,0);
+});
+
+test('readable conversion explicitly bounds output across iterative summary requests',async()=>{
+  const {readableSummary}=await load('summarize.ts');
+  const requests=[];
+  const signal=new AbortController().signal;
+  const summaryModel={...model,contextWindow:16000,maxTokens:12000};
+  const ctx={thinkingLevel:'off',modelRegistry:{streamSimple(selected,context,options){
+    requests.push({selected,context,options});
+    return {result:async()=>({...assistant([{type:'text',text:`summary ${requests.length}`}]),stopReason:'stop'})};
+  }}};
+  const result=await readableSummary(ctx,summaryModel,[{role:'user',content:'z'.repeat(40000),timestamp:1}],signal,undefined,1024);
+  assert.ok(requests.length>1,'history is summarized in multiple bounded chunks');
+  for(const request of requests){
+    assert.equal(request.selected,summaryModel);
+    assert.ok(request.options.maxTokens>0 && request.options.maxTokens<=1024,
+      'Pi 1.4 model output defaults must not exceed the chunk budget reserve');
+    assert.equal(request.options.signal,signal);
+    assert.equal(request.options.cacheRetention,'none');
+  }
+  assert.ok(JSON.stringify(requests[1].context).includes('summary 1'),'carry prior summary into the next request');
+  assert.equal(result.text,`summary ${requests.length}`);
 });
 
 test('readable conversion chunks preserve tool groups and carry usage without fabricating counts',async()=>{

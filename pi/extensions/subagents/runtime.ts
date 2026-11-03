@@ -40,6 +40,7 @@ export async function makeWorker(workspace: Workspace, record: AgentRecord, ctx:
     registerTools(pi, () => workspace, record.identity.name, !!record.template.subagents.allowed.length, record.identity);
     registerWorkflowAgents(pi, () => workspace, record.identity.name);
     pi.on("before_agent_start", event => {
+      // Shared prompt options exist for both user tasks and custom-message resumes.
       Object.assign(event.systemPromptOptions.sections, promptIdentity(record.identity, record.template, name => workspace.resolveTemplate(record, name)));
     });
     pi.on("tool_call", event => {

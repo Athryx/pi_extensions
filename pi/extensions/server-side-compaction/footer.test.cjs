@@ -11,7 +11,7 @@ const loaded = (async () => {
   const agent = await host('dist/index.js');
   const tui = await host('node_modules/@earendil-works/pi-tui/dist/index.js');
   const dependencies = {'@earendil-works/pi-coding-agent':agent, '@earendil-works/pi-tui':tui};
-  const esbuild = require(require.resolve('esbuild', {paths:[root]}));
+  const esbuild = require(require.resolve('esbuild', {paths: [join(__dirname, '../subagents'), root]}));
   const result = await esbuild.build({entryPoints:[join(__dirname,'footer.ts')],bundle:true,write:false,platform:'node',format:'cjs',external:Object.keys(dependencies)});
   const module = {exports:{}};
   new Function('module','exports','require',result.outputFiles[0].text)(module,module.exports,name=>dependencies[name] ?? require(name));

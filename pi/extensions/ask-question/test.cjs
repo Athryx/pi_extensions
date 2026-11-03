@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const root = path.resolve(path.dirname(fs.realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim())), '../..');
-const esbuild = require(require.resolve('esbuild', { paths: [root] }));
+const esbuild = require(require.resolve('esbuild', { paths: [path.join(__dirname, '../subagents'), root] }));
 
 async function load() {
   const code = (await esbuild.build({

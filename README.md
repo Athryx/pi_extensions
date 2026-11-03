@@ -1,6 +1,6 @@
 # Personal Pi extensions
 
-Compatible with Pi 1.1.0 (`@earendil-works/pi-coding-agent`). Develop extensions in `pi/extensions/`; this checkout's `pi/` resources are linked to the user configuration. Run `/reload` after changing extensions.
+Verified with Pi 1.1.0 and 1.4.0 (`@earendil-works/pi-coding-agent`). Develop extensions in `pi/extensions/`; this checkout's `pi/` resources are linked to the user configuration. Run `/reload` after changing extensions.
 
 - [`context`](pi/extensions/context/README.md): `/context` browses prompts, tool schemas, conversation context and estimated usage.
 - [`server-side-compaction`](pi/extensions/server-side-compaction/README.md): configurable per-thread Pi/OpenAI encrypted compaction, unchanged recent-history retention, portable conversion, and headless worker support.
@@ -32,6 +32,17 @@ manage-skills sync --agent pi
 ```
 
 Adjust the checkout path if needed, then `/reload`. For a single session, use `pi --skill ./skills/dynamic-workflows` instead; agent templates can use `skills.extra_paths`. Installing/loading the skill does not execute its example or alter child permissions. No global skill-manager state needs to change for tests.
+
+## Pi 1.2–1.4 upgrade compatibility
+
+Reviewed against the [Pi changelog](https://pi.dev/changelog):
+
+- **Summary output limits (1.4):** portability conversion explicitly caps each summary request to the output reserve used by its chunk budget. The host's `generateSummaryWithUsage()` no longer enforces its positional reserve argument.
+- **Run setup (1.2):** main and worker identity/skill modifiers intentionally run for both user prompts and custom-message resumes. They use shared prompt options, not user-only `prompt`/`images`, and do not require `ctx.isIdle()` during setup. Regression tests cover both event variants and busy setup.
+- **Test tooling (1.3):** Pi no longer supplies `esbuild`. Tests resolve the bundler from the subagents extension's own development dependencies, installed by the setup commands above.
+- Goal/plan user-message routing already supplies `deliverAs: "followUp"` when busy. No extensions consume the changed MCP resource-list counts, attribution headers, custom theme schema, or Kimi base-URL overrides.
+
+Compatibility tests use deterministic providers, not paid model calls. Testing a newer host does not require replacing the running Pi: put an isolated installation's `node_modules/.bin` first in `PATH`.
 
 ## Verification
 
