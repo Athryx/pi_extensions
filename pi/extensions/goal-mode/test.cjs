@@ -41,7 +41,8 @@ const final = { role: 'assistant', stopReason: 'stop', content: [{ type: 'text',
 const turn = (h, message = final, overrides = {}) => {
   const result = h.events.agent_before_settle({
     outcome: 'completed', entries: [], continue: false,
-    context: { contextMessages: [message], canContinue: true }, ...overrides,
+    // A final assistant message cannot continue until the reminder is appended.
+    context: { contextMessages: [message], canContinue: false }, ...overrides,
   }, h.ctx);
   for (const entry of result?.entries ?? []) h.sends.push({ kind: 'custom', message: entry });
   return result;
@@ -102,7 +103,6 @@ test('repeated reminders only after normal no-tool final and no queued input', a
   turn(h, final, { outcome: 'error' });
   turn(h, final, { outcome: 'aborted' });
   turn(h, final, { continue: true });
-  turn(h, final, { context: { contextMessages: [final], canContinue: false } });
   assert.equal(h.sends.length, 0);
   assert.equal(turn(h).continue, true); turn(h);
   assert.equal(h.sends.length, 2);
@@ -112,6 +112,17 @@ test('repeated reminders only after normal no-tool final and no queued input', a
   const filtered = h.events.context({ messages: [{ role: 'custom', ...h.sends[0].message }, { role: 'user', content: 'hello' }] });
   assert.equal(filtered.messages.length, 1);
   turn(h); assert.equal(h.sends.length, 2);
+});
+
+test('reminder supplies context needed to continue after a final assistant message', async () => {
+  const h = harness(await load());
+  await call(h, 'set_goal', { goal: 'keep working' });
+  const result = turn(h, final, { context: { contextMessages: [final], canContinue: false } });
+  assert.equal(result?.continue, true);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].type, 'custom_message');
+  assert.equal(result.entries[0].display, false);
+  assert.match(result.entries[0].content, /keep working/);
 });
 
 test('busy interactive command queues kickoff and goal rules live in tool guidance', async () => {

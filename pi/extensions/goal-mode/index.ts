@@ -151,7 +151,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_before_settle", (event, ctx) => {
     if (!isInteractive(ctx)) return;
-    if (!state.goal || state.status !== "running" || event.outcome !== "completed" || !event.context.canContinue || event.continue || ctx.hasPendingMessages() || ctx.signal?.aborted) return;
+    // The reminder adds user-role context; Pi validates canContinue after applying it.
+    if (!state.goal || state.status !== "running" || event.outcome !== "completed" || event.continue || ctx.hasPendingMessages() || ctx.signal?.aborted) return;
     const last = event.context.contextMessages.at(-1);
     if (last?.role !== "assistant" || last.stopReason !== "stop" || last.content.some((item) => item.type === "toolCall")) return;
     const { goal, generation } = state;
