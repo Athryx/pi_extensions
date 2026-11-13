@@ -7,6 +7,7 @@ All pi extensions should be developed in pi/extensions. Existing ones are:
 - `codex-usage`: shows current usage if using a codex model
 - `ui`: alternate convesation ui modes, and ability to show different sessions
 - `subagents`: persistent workers, same-group messaging, `/groups` and read-only `/subagents` viewing
+- `tavily-search`: Tavily web search/extract tools; deactivated on OpenAI models with native search (`codex-web-search`)
 - `workflow`: directed JS-file orchestration with local agent definitions and scoped sequence/parallel progress
 
 The `skills/dynamic-workflows/SKILL.md` skill documents workflow usage; its `examples/research.js` is read-only and self-contained. **Do not use workflow unless directed** by the user or configured agent instructions. Each `workflow.agent` creates an isolated headless group root; ordinary children stay in the creator's group. Models cannot list/message across groups. A leaf group root has no create/list/send/wait agent tools; selecting `workflow` is independent. `/groups` is human viewer navigation, not a model permission change. These are in-process tool policies, not OS isolation. `max_depth` limits ordinary child-agent depth within each group (roots at 0); `max_group_depth` limits agent-group nesting (workspace root at 0, workflow containers do not count). Both default to 4. `max_running` remains workspace-wide.

@@ -1,6 +1,6 @@
 # manage-skills
 
-A fast and safe Rust command-line tool to manage and synchronize AI coding agent skills across harnesses (`codex`, `antigravity`, `pi`, `opencode`, etc.).
+A fast and safe Rust command-line tool to manage and synchronize AI coding agent skills across harnesses (`codex`, `antigravity`, `pi`, `opencode`, `claude`, etc.).
 
 ## Features
 
@@ -21,7 +21,7 @@ cargo install --path /home/jack/projects/pi_extensions/manage-skills
 ```bash
 manage-skills init
 ```
-Automatically detects installed agent harnesses on your system (`codex`, `antigravity`, `pi`, `opencode`) and creates `~/.config/manage-skills/config.toml`.
+Automatically detects installed agent harnesses on your system (`codex`, `antigravity`, `pi`, `opencode`, `claude`) and creates `~/.config/manage-skills/config.toml`.
 
 ### 2. Add Skills
 Add an individual skill directory:
@@ -71,6 +71,14 @@ manage-skills agent add myagent ~/.myagent/skills
 manage-skills agent remove myagent
 ```
 
+### 7. Per-Agent Skills
+Every agent receives the global skill list by default. Pass `--agent` / `-a` to change one agent without affecting the others:
+```bash
+manage-skills add /path/to/my-skill --agent claude   # only claude gets this skill
+manage-skills remove python-style --agent codex      # codex no longer gets this skill
+manage-skills add /path/to/python-style --agent codex  # undo the exclusion
+```
+
 ## Configuration Format (`~/.config/manage-skills/config.toml`)
 
 ```toml
@@ -83,9 +91,16 @@ skills = [
 # Agent harness name to skills folder mapping (supports ~ and $HOME)
 [agents]
 antigravity = "~/.gemini/config/skills"
+claude = "~/.claude/skills"
 codex = "~/.codex/skills"
 opencode = "~/.config/opencode/skills"
 pi = "~/.pi/agent/skills"
+
+# Optional per-agent changes: global list, minus `remove` (skill names), plus `add` (paths).
+# `add` wins if a skill appears in both or shares a name with a global skill.
+[overrides.claude]
+add = ["/home/jack/projects/pi_extensions/skills/claude-only"]
+remove = ["python-style"]
 ```
 
 ## State Tracking (`~/.config/manage-skills/state.toml`)

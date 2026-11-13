@@ -77,6 +77,15 @@ pub fn run() -> Result<()> {
             );
             println!("  Directory: {} ({})", agent_dir.as_ref().map(|d| collapse_tilde(d)).unwrap_or_default(), dir_status);
 
+            if let Some(overrides) = config.overrides.get(agent_name) {
+                for path in &overrides.add {
+                    println!("  {} {}", "Agent-only:".dimmed(), collapse_tilde(path));
+                }
+                if !overrides.remove.is_empty() {
+                    println!("  {} {}", "Excluded:".dimmed(), overrides.remove.join(", "));
+                }
+            }
+
             if !dir_exists {
                 println!("  {}", "Directory does not exist yet. Run 'sync' to create.".dimmed());
                 continue;
@@ -97,14 +106,11 @@ pub fn run() -> Result<()> {
 
             // A) Managed skills in config
             println!("  {}:", "Managed Skills".underline());
-            if config.skills.is_empty() {
-                println!("    {}", "No skills configured in system list.".dimmed());
+            let effective = config.effective_skills(agent_name);
+            if effective.is_empty() {
+                println!("    {}", "No skills configured for this agent.".dimmed());
             } else {
-                for source in &config.skills {
-                    let skill_name = source
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
+                for (skill_name, source) in &effective {
                     let link_path = agent_dir_path.join(skill_name);
 
                     if link_path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -155,7 +161,7 @@ pub fn run() -> Result<()> {
             for item in &live_items {
                 // Check if it's managed by us
                 let is_managed = managed_map.map(|m| m.contains_key(item)).unwrap_or(false)
-                    || config.skills.iter().any(|s| s.file_name().map(|n| n == item.as_str()).unwrap_or(false));
+                    || effective.contains_key(item);
                 
                 if !is_managed {
                     let item_path = agent_dir_path.join(item);

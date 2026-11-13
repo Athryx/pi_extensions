@@ -25,6 +25,7 @@ pub fn add(name: &str, path_str: &str) -> Result<()> {
 pub fn remove(name: &str) -> Result<()> {
     let mut config = Config::load_or_default()?;
     if config.agents.remove(name).is_some() {
+        config.overrides.remove(name);
         config.save()?;
         println!(
             "{} Removed agent '{}' from configuration.",

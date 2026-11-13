@@ -1,8 +1,8 @@
 {
   "lastChangelogVersion": "1.5.0",
   "theme": "dark",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6.1-terra",
+  "defaultProvider": "openrouter",
+  "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
   "enabledModels": [
     "openai-codex/gpt-6-luna",
     "openai-codex/gpt-6-astra",
@@ -16,7 +16,9 @@
   "steeringMode": "all",
   "editorPaddingX": 1,
   "defaultTools": [
-    "+codemode"
+    "+codemode",
+    "+tavily_search",
+    "+tavily_extract"
   ],
   "hideThinkingBlock": true
 }

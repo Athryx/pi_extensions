@@ -5,6 +5,7 @@ Verified with Pi 1.1.0 and 1.4.0 (`@earendil-works/pi-coding-agent`). Develop ex
 - [`context`](pi/extensions/context/README.md): `/context` browses prompts, tool schemas, conversation context and estimated usage.
 - [`server-side-compaction`](pi/extensions/server-side-compaction/README.md): configurable per-thread Pi/OpenAI encrypted compaction, unchanged recent-history retention, portable conversion, and headless worker support.
 - [`codex-web-search`](pi/extensions/codex-web-search/README.md): selectable native OpenAI web search, live/cached configuration, conversation-local `/web-search` commands, and portable source links.
+- [`tavily-search`](pi/extensions/tavily-search/README.md): `tavily_search`/`tavily_extract` tools, automatically deactivated on models that use native OpenAI web search.
 - [`subagents`](pi/extensions/subagents/README.md): YAML agent templates, persistent workers and same-group messaging. `/groups` selects a human viewer group; `/subagents` inspects its agents read-only. The bottom bar and agent cycling show only the selected group's members.
 - [`workflow`](pi/extensions/workflow/README.md): directed JavaScript-file orchestration using the public codemode sandbox, local agent definitions, scoped sequence/parallel helpers and progress. Every launched agent is a headless root in its own isolated communication group.
 - [`dynamic-workflows` skill](skills/dynamic-workflows/SKILL.md): authoring/running directed workflows, with a self-contained [read-only research example](skills/dynamic-workflows/examples/research.js).

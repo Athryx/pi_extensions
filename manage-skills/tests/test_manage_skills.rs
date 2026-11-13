@@ -1,4 +1,4 @@
-use manage_skills::config::Config;
+use manage_skills::config::{AgentOverrides, Config};
 use manage_skills::fs_utils::{
     create_or_replace_symlink, expand_tilde, find_skills_recursive, is_skill_dir, read_symlink,
 };
@@ -17,6 +17,147 @@ fn test_expand_tilde() {
         expand_tilde(Path::new("/var/log")),
         PathBuf::from("/var/log")
     );
+}
+
+#[test]
+fn test_init_detects_claude_code() {
+    // Runs the binary so HOME can be overridden without racing other tests.
+    let temp = tempdir().expect("Failed to create tempdir");
+    let home = temp.path();
+    let xdg = home.join("xdg");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_manage-skills"))
+        .arg("init")
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .status()
+        .expect("Failed to run manage-skills");
+    assert!(status.success());
+
+    let content = fs::read_to_string(xdg.join("manage-skills/config.toml")).unwrap();
+    let config: Config = toml::from_str(&content).unwrap();
+    assert_eq!(
+        config.agents.get("claude").map(String::as_str),
+        Some("~/.claude/skills")
+    );
+    assert_eq!(config.agents.len(), 1);
+}
+
+#[test]
+fn test_effective_skills_merges_overrides() {
+    let mut config = Config::default();
+    config.skills = vec![PathBuf::from("/g/a"), PathBuf::from("/g/b")];
+    config.overrides.insert(
+        "claude".to_string(),
+        AgentOverrides {
+            add: vec![PathBuf::from("/x/c"), PathBuf::from("/x/b")],
+            remove: vec!["a".to_string(), "b".to_string()],
+        },
+    );
+
+    let claude = config.effective_skills("claude");
+    assert_eq!(claude.keys().collect::<Vec<_>>(), ["b", "c"]);
+    assert_eq!(claude["b"], PathBuf::from("/x/b")); // add wins over remove and global
+
+    let codex = config.effective_skills("codex");
+    assert_eq!(codex.keys().collect::<Vec<_>>(), ["a", "b"]);
+    assert_eq!(codex["b"], PathBuf::from("/g/b"));
+}
+
+#[test]
+fn test_agent_add_and_remove_round_trip() {
+    let mut config = Config::default();
+    config.skills = vec![PathBuf::from("/g/a")];
+
+    // Excluding a global skill, then adding it back, leaves no override behind.
+    assert_eq!(config.remove_agent_skill("claude", "a").as_deref(), Some("a"));
+    assert!(config.effective_skills("claude").is_empty());
+    assert_eq!(config.remove_agent_skill("claude", "a"), None);
+    assert!(config.add_agent_skill("claude", PathBuf::from("/g/a")));
+    assert!(!config.add_agent_skill("claude", PathBuf::from("/g/a")));
+    assert!(config.overrides.is_empty());
+
+    // Removing an agent's replacement of a global skill removes the skill entirely.
+    assert!(config.add_agent_skill("claude", PathBuf::from("/x/a")));
+    assert_eq!(config.remove_agent_skill("claude", "/x/a").as_deref(), Some("a"));
+    assert!(config.effective_skills("claude").is_empty());
+
+    // An agent-only skill leaves no exclusion behind.
+    assert!(config.add_agent_skill("codex", PathBuf::from("/x/only")));
+    assert_eq!(config.remove_agent_skill("codex", "only").as_deref(), Some("only"));
+    assert!(!config.overrides.contains_key("codex"));
+}
+
+#[test]
+fn test_config_without_overrides_still_parses() {
+    let config: Config =
+        toml::from_str("skills = [\"/g/a\"]\n[agents]\npi = \"~/.pi/agent/skills\"\n").unwrap();
+    assert!(config.overrides.is_empty());
+    assert!(!toml::to_string_pretty(&config).unwrap().contains("overrides"));
+}
+
+#[test]
+fn test_config_rejects_unknown_override_fields() {
+    let parsed: Result<Config, _> = toml::from_str("[overrides.pi]\nexclude = [\"a\"]\n");
+    assert!(parsed.is_err());
+}
+
+#[test]
+fn test_sync_applies_per_agent_overrides() {
+    let temp = tempdir().expect("Failed to create tempdir");
+    let home = temp.path().canonicalize().unwrap();
+    let cli = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_manage-skills"))
+            .args(args)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join("xdg"))
+            .output()
+            .expect("Failed to run manage-skills")
+    };
+    let path = |p: &str| home.join(p).to_string_lossy().to_string();
+    let linked = |dir: &str| {
+        let mut names: Vec<String> = fs::read_dir(home.join(dir))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    };
+    for skill in ["src/a", "src/b", "src/c"] {
+        fs::create_dir_all(home.join(skill)).unwrap();
+        fs::write(home.join(skill).join("SKILL.md"), "skill").unwrap();
+    }
+
+    for args in [
+        ["agent", "add", "claude", path("claude").as_str()],
+        ["agent", "add", "codex", path("codex").as_str()],
+    ] {
+        assert!(cli(&args).status.success());
+    }
+    assert!(cli(&["add", &path("src/a")]).status.success());
+    assert!(cli(&["add", &path("src/b")]).status.success());
+    assert!(cli(&["add", &path("src/c"), "--agent", "claude"]).status.success());
+    assert!(cli(&["remove", "a", "--agent", "claude"]).status.success());
+    assert!(cli(&["sync"]).status.success());
+    assert_eq!(linked("claude"), ["b", "c"]);
+    assert_eq!(linked("codex"), ["a", "b"]);
+
+    // Excluding a skill that is already linked prunes only that agent's link.
+    assert!(cli(&["remove", "b", "--agent", "codex", "--sync"]).status.success());
+    assert_eq!(linked("codex"), ["a"]);
+    assert_eq!(linked("claude"), ["b", "c"]);
+
+    // Unknown agents and inactive skills are errors, not silent no-ops.
+    assert!(!cli(&["remove", "a", "--agent", "nope"]).status.success());
+    assert!(!cli(&["remove", "a", "--agent", "claude"]).status.success());
+
+    // Removing an agent also clears its overrides.
+    assert!(cli(&["agent", "remove", "claude"]).status.success());
+    let content = fs::read_to_string(home.join("xdg/manage-skills/config.toml")).unwrap();
+    let config: Config = toml::from_str(&content).unwrap();
+    assert!(!config.overrides.contains_key("claude"));
+    assert!(config.overrides.contains_key("codex"));
 }
 
 #[test]

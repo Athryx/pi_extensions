@@ -20,6 +20,7 @@ pub fn run(force: bool) -> Result<()> {
     let config = Config {
         skills: Vec::new(),
         agents: detected_agents.clone(),
+        ..Config::default()
     };
 
     config.save()?;

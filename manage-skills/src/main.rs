@@ -6,7 +6,7 @@ use manage_skills::commands;
 #[command(
     name = "manage-skills",
     version,
-    about = "Manage and synchronize AI coding agent skills across harnesses (Codex, Antigravity, Pi, OpenCode, etc.)",
+    about = "Manage and synchronize AI coding agent skills across harnesses (Codex, Antigravity, Pi, OpenCode, Claude Code, etc.)",
     long_about = "A CLI tool to centralize and sync AI coding agent skills across harnesses via symlinks, maintaining config in ~/.config/manage-skills/config.toml and tracking managed state."
 )]
 struct Cli {
@@ -35,6 +35,10 @@ enum Commands {
         /// Immediately sync skills after adding
         #[arg(short, long)]
         sync: bool,
+
+        /// Add only for this agent, on top of the global list
+        #[arg(short, long)]
+        agent: Option<String>,
     },
 
     /// Synchronize skills to agent harness directories
@@ -60,6 +64,10 @@ enum Commands {
         /// Immediately sync and remove symlinks after removing from config
         #[arg(short, long)]
         sync: bool,
+
+        /// Remove only for this agent, leaving the global list unchanged
+        #[arg(short, long)]
+        agent: Option<String>,
     },
 
     /// Manage configured agent harnesses
@@ -73,7 +81,7 @@ enum Commands {
 enum AgentCommands {
     /// Register a new agent harness
     Add {
-        /// Name of the agent (e.g., codex, pi, antigravity, opencode, custom)
+        /// Name of the agent (e.g., codex, pi, antigravity, opencode, claude, custom)
         name: String,
         /// Path to the agent's skills directory (e.g., ~/.codex/skills)
         path: String,
@@ -99,10 +107,13 @@ fn main() -> Result<()> {
             path,
             recursive,
             sync,
-        } => commands::add::run(&path, recursive, sync),
+            agent,
+        } => commands::add::run(&path, recursive, sync, agent.as_deref()),
         Commands::Sync { agent, dry_run } => commands::sync::run(agent.as_deref(), dry_run),
         Commands::List => commands::list::run(),
-        Commands::Remove { query, sync } => commands::remove::run(&query, sync),
+        Commands::Remove { query, sync, agent } => {
+            commands::remove::run(&query, sync, agent.as_deref())
+        }
         Commands::Agent { command } => match command {
             AgentCommands::Add { name, path } => commands::agent::add(&name, &path),
             AgentCommands::Remove { name } => commands::agent::remove(&name),

@@ -5,8 +5,18 @@ use std::path::{Path, PathBuf};
 use crate::config::Config;
 use crate::fs_utils::{collapse_tilde, expand_tilde, find_skills_recursive, is_skill_dir};
 
-pub fn run(path_str: &str, recursive: bool, do_sync: bool) -> Result<()> {
+fn register(config: &mut Config, agent: Option<&str>, path: PathBuf) -> bool {
+    match agent {
+        Some(agent) => config.add_agent_skill(agent, path),
+        None => config.add_skill(path),
+    }
+}
+
+pub fn run(path_str: &str, recursive: bool, do_sync: bool, agent: Option<&str>) -> Result<()> {
     let mut config = Config::load_or_default()?;
+    if let Some(agent) = agent {
+        config.ensure_agent(agent)?;
+    }
     let input_path = expand_tilde(Path::new(path_str));
 
     if !input_path.exists() {
@@ -34,7 +44,7 @@ pub fn run(path_str: &str, recursive: bool, do_sync: bool) -> Result<()> {
         }
 
         for skill_path in found {
-            if config.add_skill(skill_path.clone()) {
+            if register(&mut config, agent, skill_path.clone()) {
                 added_skills.push(skill_path);
             } else {
                 already_existing.push(skill_path);
@@ -58,7 +68,7 @@ pub fn run(path_str: &str, recursive: bool, do_sync: bool) -> Result<()> {
             .canonicalize()
             .with_context(|| format!("Failed to canonicalize path '{}'", input_path.display()))?;
 
-        if config.add_skill(canonical.clone()) {
+        if register(&mut config, agent, canonical.clone()) {
             added_skills.push(canonical);
         } else {
             already_existing.push(canonical);
@@ -67,7 +77,8 @@ pub fn run(path_str: &str, recursive: bool, do_sync: bool) -> Result<()> {
 
     if !added_skills.is_empty() {
         config.save()?;
-        println!("\n{} Added {} skill(s) to config:", "✓".green().bold(), added_skills.len());
+        let scope = agent.map_or("config".to_string(), |a| format!("agent '{}'", a));
+        println!("\n{} Added {} skill(s) to {}:", "✓".green().bold(), added_skills.len(), scope);
         for p in &added_skills {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
             println!("  • {:<20} ({})", name.bold(), collapse_tilde(p).dimmed());
@@ -88,7 +99,7 @@ pub fn run(path_str: &str, recursive: bool, do_sync: bool) -> Result<()> {
 
     if do_sync {
         println!();
-        crate::commands::sync::run(None, false)?;
+        crate::commands::sync::run(agent, false)?;
     } else if !added_skills.is_empty() {
         println!("\nRun {} to synchronize skills across your agents.", "manage-skills sync".bold());
     }

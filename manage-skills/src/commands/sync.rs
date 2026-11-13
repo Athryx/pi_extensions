@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::config::Config;
@@ -42,29 +42,27 @@ pub fn run(filter_agent: Option<&str>, dry_run: bool) -> Result<()> {
         config.agents.iter().collect()
     };
 
-    // Prepare desired skills map: skill_name -> source_path
-    let mut desired_skills: BTreeMap<String, PathBuf> = BTreeMap::new();
-    for source in &config.skills {
+    // Warn once per bad path, however many agents reference it.
+    let mut sources: BTreeSet<&PathBuf> = config.skills.iter().collect();
+    for (agent_name, _) in &target_agents {
+        if let Some(overrides) = config.overrides.get(*agent_name) {
+            sources.extend(&overrides.add);
+        }
+    }
+    for source in sources {
         if !source.exists() {
             println!(
                 "{} Warning: Configured skill path does not exist: {}",
                 "!".yellow().bold(),
                 source.display()
             );
-            continue;
+        } else if source.file_name().is_none() {
+            println!(
+                "{} Warning: Invalid skill path (no directory name): {}",
+                "!".yellow().bold(),
+                source.display()
+            );
         }
-        let skill_name = match source.file_name() {
-            Some(n) => n.to_string_lossy().to_string(),
-            None => {
-                println!(
-                    "{} Warning: Invalid skill path (no directory name): {}",
-                    "!".yellow().bold(),
-                    source.display()
-                );
-                continue;
-            }
-        };
-        desired_skills.insert(skill_name, source.clone());
     }
 
     let mut total_linked = 0;
@@ -74,6 +72,9 @@ pub fn run(filter_agent: Option<&str>, dry_run: bool) -> Result<()> {
     let mut total_skipped = 0;
 
     for (agent_name, agent_path_str) in target_agents {
+        let mut desired_skills = config.effective_skills(agent_name);
+        desired_skills.retain(|_, source| source.exists());
+
         println!(
             "\n{} Syncing agent {} ({})",
             "==>".blue().bold(),
